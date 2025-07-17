@@ -1,22 +1,29 @@
+image: docker:latest
+
+services:
+  - docker:dind
+
 stages:
   - build_flutter_android
   - build_node
   - deploy
+
 variables:
   DOCKER_HOST: tcp://docker:2375
   DOCKER_TLS_CERTDIR: ""
   BACKEND_IMAGE: azizhk444/nodejserver
-flutter-apk-build:
-  stage: build_flutter_android
-  image: ghcr.io/cirruslabs/flutter:3.32.6
-  script:
-    - cd tasktodo_frontend
-    - flutter --version
-    - flutter pub get
-    - flutter build apk --release
-  artifacts:
-    paths:
-      - tasktodo_frontend/build/app/outputs/flutter-apk/app-release.apk
+
+# flutter-apk-build:
+#   stage: build_flutter_android
+#   image: ghcr.io/cirruslabs/flutter:3.32.6
+#   script:
+#     - cd tasktodo_frontend
+#     - flutter pub get
+#     - flutter build apk --release
+#   artifacts:
+#     paths:
+#       - tasktodo_frontend/build/app/outputs/flutter-apk/app-release.apk
+
 build_backend:
   stage: build_node
   script:
@@ -33,6 +40,7 @@ deploy_app:
     SSH_USER: "root"
     SSH_PORT: "51821"
   before_script:
+    - apk add --no-cache openssh
     - mkdir -p ~/.ssh
     - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
