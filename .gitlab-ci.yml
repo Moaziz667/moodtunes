@@ -1,0 +1,14 @@
+stages:
+  - build
+
+flutter-apk-build:
+  stage: build #build
+  image: ghcr.io/cirruslabs/flutter:3.32.6
+  script:
+    - cd tasktodo_frontend
+    - flutter --version
+    - flutter pub get
+    - flutter build apk --release
+  artifacts:
+    paths:
+      - build/app/outputs/flutter-apk/app-release.apk
