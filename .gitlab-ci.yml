@@ -7,7 +7,7 @@ variables:
   DOCKER_TLS_CERTDIR: ""
   BACKEND_IMAGE: azizhk444/nodejserver
 flutter-apk-build:
-  stage: build_flutter
+  stage: build_flutter_android
   image: ghcr.io/cirruslabs/flutter:3.32.6
   script:
     - cd tasktodo_frontend
@@ -18,7 +18,7 @@ flutter-apk-build:
     paths:
       - tasktodo_frontend/build/app/outputs/flutter-apk/app-release.apk
 build_backend:
-  stage: build_backend
+  stage: build_node
   script:
     - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
     - docker build -t $BACKEND_IMAGE ./backend
