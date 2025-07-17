@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  mongo:
+    image: mongo:6.0
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  backend:
+    image:  azizhk444/nodejserver  # adjust path to your Node.js backend folder
+    restart: unless-stopped
+    ports:
+      - "3000:3000"  # expose backend port
+    depends_on:
+      - mongo
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/todo  # update DB name here
+
+volumes:
+  mongo-data:

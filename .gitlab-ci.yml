@@ -1,8 +1,13 @@
 stages:
-  - build
-
+  - build_flutter_android
+  - build_node
+  - deploy
+variables:
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+  BACKEND_IMAGE: azizhk444/nodejserver
 flutter-apk-build:
-  stage: build #build
+  stage: build_flutter
   image: ghcr.io/cirruslabs/flutter:3.32.6
   script:
     - cd tasktodo_frontend
@@ -11,4 +16,35 @@ flutter-apk-build:
     - flutter build apk --release
   artifacts:
     paths:
-      - build/app/outputs/flutter-apk/app-release.apk
+      - tasktodo_frontend/build/app/outputs/flutter-apk/app-release.apk
+build_backend:
+  stage: build_backend
+  script:
+    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+    - docker build -t $BACKEND_IMAGE ./backend
+    - docker push $BACKEND_IMAGE
+  tags:
+    - my-vps
+
+deploy_app:
+  stage: deploy
+  variables:
+    SSH_HOST: "185.44.67.203"
+    SSH_USER: "root"
+    SSH_PORT: "51821"
+  before_script:
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+  script:
+    - scp -P $SSH_PORT docker-compose.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
+    - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
+        docker compose -f /root/docker-compose.yml down &&
+        docker compose -f /root/docker-compose.yml pull &&
+        docker compose -f /root/docker-compose.yml up -d --build
+      "
+  only:
+    - main
+  tags:
+    - my-vps
