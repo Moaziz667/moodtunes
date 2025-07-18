@@ -8,7 +8,7 @@ stages:
   - test
   - build_node
   - deploy
-  - publish_pages
+  - publish_pages     # add new stage for pages deploy
 
 variables:
   DOCKER_HOST: tcp://docker:2375
@@ -18,13 +18,6 @@ variables:
 build_flutter_apk:
   stage: build_flutter_android
   image: ghcr.io/cirruslabs/flutter:3.32.6
-  tags:
-    - my-vps
-  cache:
-    key: flutter-pub-cache
-    paths:
-      - tasktodo_frontend/.pub-cache
-      - tasktodo_frontend/.dart_tool
   script:
     - cd tasktodo_frontend
     - flutter pub get
@@ -51,11 +44,6 @@ flutter_test:
   image: ghcr.io/cirruslabs/flutter:3.32.6
   tags:
     - my-vps
-  cache:
-    key: flutter-pub-cache
-    paths:
-      - tasktodo_frontend/.pub-cache
-      - tasktodo_frontend/.dart_tool
   script:
     - cd tasktodo_frontend
     - flutter pub get
