@@ -76,7 +76,7 @@ deploy_app:
     - chmod 600 ~/.ssh/id_rsa
     - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
   script:
-    - scp -P $SSH_PORT tasktodo_frontend/docker-compose.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
+    - scp -P $SSH_PORT TaskToDo_Backend/docker-compose.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
     - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
         docker compose -f /root/docker-compose.yml down &&
         docker compose -f /root/docker-compose.yml pull &&
