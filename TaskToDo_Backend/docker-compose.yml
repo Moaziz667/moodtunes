@@ -17,7 +17,7 @@ services:
     depends_on:
       - mongo
     environment:
-      MONGODB_URI: mongodb://mongo:27017/todo  # update DB name here
+      MONGODB_URI: mongodb://mongo:27017/TaskToDo  # update DB name here
 
 volumes:
   mongo-data:
