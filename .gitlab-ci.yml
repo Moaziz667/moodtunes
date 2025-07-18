@@ -5,24 +5,66 @@ services:
 
 stages:
   - build_flutter_android
+  - test
   - build_node
   - deploy
+  - publish_pages
 
 variables:
   DOCKER_HOST: tcp://docker:2375
   DOCKER_TLS_CERTDIR: ""
   BACKEND_IMAGE: azizhk444/nodejserver
 
-# flutter-apk-build:
-#   stage: build_flutter_android
-#   image: ghcr.io/cirruslabs/flutter:3.32.6
-#   script:
-#     - cd tasktodo_frontend
-#     - flutter pub get
-#     - flutter build apk --release
-#   artifacts:
-#     paths:
-#       - tasktodo_frontend/build/app/outputs/flutter-apk/app-release.apk
+build_flutter_apk:
+  stage: build_flutter_android
+  image: ghcr.io/cirruslabs/flutter:3.32.6
+  tags:
+    - my-vps
+  cache:
+    key: flutter-pub-cache
+    paths:
+      - tasktodo_frontend/.pub-cache
+      - tasktodo_frontend/.dart_tool
+  script:
+    - cd tasktodo_frontend
+    - flutter pub get
+    - flutter build apk --release
+    - APK_VERSION="v${CI_PIPELINE_IID}"
+    - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk
+    - mkdir -p public/apks
+    - mv app-$APK_VERSION.apk public/apks/
+    # Generate or update index.html with all APKs
+    - |
+      echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
+      for apk in public/apks/app-*.apk; do
+        echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
+      done
+      echo "</ul></body></html>" >> public/index.html
+  artifacts:
+    paths:
+      - tasktodo_frontend/public
+  only:
+    - main
+
+flutter_test:
+  stage: test
+  image: ghcr.io/cirruslabs/flutter:3.32.6
+  tags:
+    - my-vps
+  cache:
+    key: flutter-pub-cache
+    paths:
+      - tasktodo_frontend/.pub-cache
+      - tasktodo_frontend/.dart_tool
+  script:
+    - cd tasktodo_frontend
+    - flutter pub get
+    - flutter test --coverage
+  artifacts:
+    paths:
+      - tasktodo_frontend/coverage/lcov.info
+  only:
+    - main
 
 build_backend:
   stage: build_node
@@ -46,12 +88,26 @@ deploy_app:
     - chmod 600 ~/.ssh/id_rsa
     - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
   script:
-    - scp -P $SSH_PORT docker-compose.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
+    - scp -P $SSH_PORT tasktodo_frontend/docker-compose.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
     - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
         docker compose -f /root/docker-compose.yml down &&
         docker compose -f /root/docker-compose.yml pull &&
         docker compose -f /root/docker-compose.yml up -d --build
       "
+  only:
+    - main
+  tags:
+    - my-vps
+
+pages:
+  stage: publish_pages
+  dependencies:
+    - build_flutter_apk
+  script:
+    - cp -r tasktodo_frontend/public .
+  artifacts:
+    paths:
+      - public
   only:
     - main
   tags:
