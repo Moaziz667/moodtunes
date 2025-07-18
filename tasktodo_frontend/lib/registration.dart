@@ -14,36 +14,48 @@ class Registration extends StatefulWidget {
 }
 
 class _RegistrationState extends State<Registration> {
-
   TextEditingController emailController = TextEditingController();
   TextEditingController passwordController = TextEditingController();
+
   bool _isNotValidate = false;
+  String errorMessage = '';
 
-  void registerUser() async{
-    if(emailController.text.isNotEmpty && passwordController.text.isNotEmpty){
-
+  void registerUser() async {
+    if (emailController.text.isNotEmpty && passwordController.text.isNotEmpty) {
       var regBody = {
-        "email":emailController.text,
-        "password":passwordController.text
+        "email": emailController.text,
+        "password": passwordController.text
       };
 
-      var response = await http.post(Uri.parse(registration),
-      headers: {"Content-Type":"application/json"},
-      body: jsonEncode(regBody)
-      );
+      try {
+        var response = await http.post(
+          Uri.parse(registration),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode(regBody),
+        );
 
-      var jsonResponse = jsonDecode(response.body);
+        var jsonResponse = jsonDecode(response.body);
 
-      print(jsonResponse['status']);
-
-      if(jsonResponse['status']){
-        Navigator.push(context, MaterialPageRoute(builder: (context)=>SignInPage()));
-      }else{
-        print("SomeThing Went Wrong");
+        if (jsonResponse['status']) {
+          setState(() {
+            errorMessage = '';
+          });
+          Navigator.push(
+              context, MaterialPageRoute(builder: (context) => SignInPage()));
+        } else {
+          setState(() {
+            errorMessage = jsonResponse['message'] ?? "Something went wrong!";
+          });
+        }
+      } catch (e) {
+        setState(() {
+          errorMessage = "Network error. Try again later.";
+        });
       }
-    }else{
+    } else {
       setState(() {
         _isNotValidate = true;
+        errorMessage = "Please fill in all fields.";
       });
     }
   }
@@ -57,11 +69,11 @@ class _RegistrationState extends State<Registration> {
           height: MediaQuery.of(context).size.height,
           decoration: BoxDecoration(
             gradient: LinearGradient(
-                colors: [const Color(0xFF42A5F5),const Color(0xFF1976D2)],
-                begin: FractionalOffset.topLeft,
-                end: FractionalOffset.bottomCenter,
-                stops: [0.0,0.8],
-                tileMode: TileMode.mirror
+              colors: [Color(0xFF42A5F5), Color(0xFF1976D2)],
+              begin: FractionalOffset.topLeft,
+              end: FractionalOffset.bottomCenter,
+              stops: [0.0, 0.8],
+              tileMode: TileMode.mirror,
             ),
           ),
           child: Center(
@@ -72,53 +84,82 @@ class _RegistrationState extends State<Registration> {
                   CommonLogo(),
                   HeightBox(10),
                   "CREATE YOUR ACCOUNT".text.size(22).yellow100.make(),
+                  if (errorMessage.isNotEmpty)
+                    Text(
+                      errorMessage,
+                      style: TextStyle(color: Colors.redAccent, fontSize: 14),
+                    ).pOnly(bottom: 10),
                   TextField(
                     controller: emailController,
-                    keyboardType: TextInputType.text,
+                    keyboardType: TextInputType.emailAddress,
                     decoration: InputDecoration(
-                        filled: true,
-                        fillColor: Colors.white,
-                        errorStyle: TextStyle(color: Colors.white),
-                        errorText: _isNotValidate ? "Enter Proper Info" : null,
-                        hintText: "Email",
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.all(Radius.circular(10.0)))),
+                      filled: true,
+                      fillColor: Colors.white,
+                      errorStyle: TextStyle(color: Colors.white),
+                      errorText:
+                          _isNotValidate && emailController.text.isEmpty
+                              ? "Enter valid email"
+                              : null,
+                      hintText: "Email",
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(10.0)),
+                      ),
+                    ),
                   ).p4().px24(),
                   TextField(
                     controller: passwordController,
+                    obscureText: true,
                     keyboardType: TextInputType.text,
                     decoration: InputDecoration(
-                        suffixIcon: IconButton(icon: Icon(Icons.copy),onPressed: (){
-                          final data = ClipboardData(text: passwordController.text);
+                      suffixIcon: IconButton(
+                        icon: Icon(Icons.copy),
+                        onPressed: () {
+                          final data = ClipboardData(
+                              text: passwordController.text);
                           Clipboard.setData(data);
-                        },),
-                        prefixIcon: IconButton(icon: Icon(Icons.password),onPressed: (){
-                          String passGen =  generatePassword();
+                        },
+                      ),
+                      prefixIcon: IconButton(
+                        icon: Icon(Icons.password),
+                        onPressed: () {
+                          String passGen = generatePassword();
                           passwordController.text = passGen;
-                          setState(() {
-
-                          });
-                        },),
-                        filled: true,
-                        fillColor: Colors.white,
-                        errorStyle: TextStyle(color: Colors.white),
-                        errorText: _isNotValidate ? "Enter Proper Info" : null,
-                        hintText: "Password",
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.all(Radius.circular(10.0)))),
+                          setState(() {});
+                        },
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      errorStyle: TextStyle(color: Colors.white),
+                      errorText:
+                          _isNotValidate && passwordController.text.isEmpty
+                              ? "Enter valid password"
+                              : null,
+                      hintText: "Password",
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(10.0)),
+                      ),
+                    ),
                   ).p4().px24(),
                   HStack([
                     GestureDetector(
-                      onTap: ()=>{
-                        registerUser()
+                      onTap: () {
+                        registerUser();
                       },
-                        child: VxBox(child: "Register".text.white.makeCentered().p16()).green600.roundedLg.make().px16().py16(),
+                      child: VxBox(
+                              child: "Register".text.white.makeCentered().p16())
+                          .green600
+                          .roundedLg
+                          .make()
+                          .px16()
+                          .py16(),
                     ),
                   ]),
                   GestureDetector(
-                    onTap: (){
-                      print("Sign In");
-                      Navigator.push(context, MaterialPageRoute(builder: (context)=>SignInPage()));
+                    onTap: () {
+                      Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) => SignInPage()));
                     },
                     child: HStack([
                       "Already Registered?".text.make(),
@@ -142,13 +183,10 @@ String generatePassword() {
   String symbols = '!@#\$%^&*()<>,./';
 
   String password = '';
-
   int passLength = 20;
 
   String seed = upper + lower + numbers + symbols;
-
   List<String> list = seed.split('').toList();
-
   Random rand = Random();
 
   for (int i = 0; i < passLength; i++) {
@@ -157,5 +195,3 @@ String generatePassword() {
   }
   return password;
 }
-
-
