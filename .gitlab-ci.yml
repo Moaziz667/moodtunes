@@ -84,9 +84,25 @@ mount_ebs_volume:
     - export VOLUME_ID=$(aws ec2 describe-volumes --filters Name=tag:Name,Values=mongo-ebs-volume --query 'Volumes[0].VolumeId' --region $AWS_REGION --output text)
     - export INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$EC2_IP" --query 'Reservations[0].Instances[0].InstanceId' --region $AWS_REGION --output text)
   script:
-    - aws ec2 detach-volume --volume-id $VOLUME_ID --region $AWS_REGION || true
-    - sleep 10
-    - aws ec2 attach-volume --volume-id $VOLUME_ID --instance-id $INSTANCE_ID --device /dev/xvdf --region $AWS_REGION
+    - |
+      echo "Checking if volume is attached..."
+      ATTACHMENT_STATE=$(aws ec2 describe-volumes \
+        --volume-ids $VOLUME_ID \
+        --query "Volumes[0].Attachments[0].State" \
+        --output text \
+        --region $AWS_REGION 2>/dev/null || echo "detached")
+
+      if [ "$ATTACHMENT_STATE" = "attached" ]; then
+        echo "Detaching volume..."
+        aws ec2 detach-volume --volume-id $VOLUME_ID --region $AWS_REGION
+        sleep 10
+      else
+        echo "Volume is already detached. Skipping detach."
+      fi
+
+    - |
+      echo "Attaching volume..."
+      aws ec2 attach-volume --volume-id $VOLUME_ID --instance-id $INSTANCE_ID --device /dev/xvdf --region $AWS_REGION || echo "Already attached or in use"
   artifacts:
     paths:
       - ec2_ip.txt
@@ -94,7 +110,6 @@ mount_ebs_volume:
     - main
   tags:
     - my-vps
-
 
 setup_and_deploy_app:
   stage: deploy
@@ -133,6 +148,7 @@ setup_and_deploy_app:
     - main
   tags:
     - my-vps
+
 
 
 # --- COMMENTED STAGES FOR FUTURE USE ---
