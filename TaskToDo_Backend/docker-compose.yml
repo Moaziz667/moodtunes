@@ -7,17 +7,14 @@ services:
     ports:
       - "27017:27017"
     volumes:
-      - mongo-data:/data/db
+      - /mnt/mongo-data:/data/db   # Use EBS mount for MongoDB data persistence
 
   backend:
-    image:  azizhk444/nodejserver  # adjust path to your Node.js backend folder
+    image: azizhk444/nodejserver
     restart: unless-stopped
     ports:
-      - "3000:3000"  # expose backend port
+      - "3000:3000"
     depends_on:
       - mongo
     environment:
-      MONGODB_URI: mongodb://mongo:27017/TaskToDo  # update DB name here
-
-volumes:
-  mongo-data:
+      MONGODB_URI: mongodb://mongo:27017/TaskToDo
