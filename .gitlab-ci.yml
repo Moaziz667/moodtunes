@@ -37,63 +37,58 @@ terraform_apply:
     - my-vps
 
 # --- Deploy App to EC2 with Mounted EBS Volume ---
+
 deploy_app:
-  stage: deploy
   image: amazon/aws-cli:latest
+  stage: deploy
+  services:
+    - docker:dind
   variables:
     AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
     AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
     AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
-  before_script:
-    - apk add --no-cache openssh sshpass curl docker-compose bash
-    - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-    - chmod 600 ~/.ssh/id_rsa
-    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
-    - export EC2_IP=$(cat ec2_ip.txt)
-    - export AWS_REGION="eu-north-1"
-
-    # Validate AWS CLI and region
-    - aws sts get-caller-identity --region $AWS_REGION
-
-    # Lookup EBS volume and EC2 instance ID
-    - export VOLUME_ID=$(aws ec2 describe-volumes --filters Name=tag:Name,Values=mongo-ebs-volume --query 'Volumes[0].VolumeId' --region $AWS_REGION --output text)
-    - export INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$EC2_IP" --query 'Reservations[0].Instances[0].InstanceId' --region $AWS_REGION --output text)
-
   script:
-    # Detach (if already attached)
-    - aws ec2 detach-volume --volume-id $VOLUME_ID --region $AWS_REGION || true
-    - sleep 10
+    # Debug: Confirm AWS variables exist
+    - echo "✅ Checking AWS env vars..."
+    - echo "AWS Access Key Length: ${AWS_ACCESS_KEY_ID} chars"
+    - echo "AWS Region: $AWS_DEFAULT_REGION"
+    - aws sts get-caller-identity || { echo '❌ AWS credentials are invalid'; exit 1; }
 
-    # Attach to new EC2 instance
-    - aws ec2 attach-volume --volume-id $VOLUME_ID --instance-id $INSTANCE_ID --device /dev/xvdf --region $AWS_REGION
-    - sleep 10
+    # Get EC2 IP
+    - echo "📦 Reading EC2 IP from file..."
+    - cat ec2_ip.txt || { echo "❌ ec2_ip.txt missing"; exit 1; }
+    - export EC2_IP=$(cat ec2_ip.txt)
+    - if [ -z "$EC2_IP" ]; then echo "❌ EC2_IP is empty"; exit 1; fi
+    - echo "✅ EC2_IP = $EC2_IP"
 
-    # Mount, format, and set up Docker & Docker Compose
-    - ssh ubuntu@$EC2_IP "
+    # Get EC2 instance ID using IP
+    - echo "🔍 Getting EC2 instance ID..."
+    - export INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$EC2_IP" --query 'Reservations[0].Instances[0].InstanceId' --output text)
+    - if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then echo "❌ Failed to get EC2 instance ID"; exit 1; fi
+    - echo "✅ Instance ID = $INSTANCE_ID"
+
+    # Mount EBS volume to EC2 via SSH
+    - echo "🔗 SSH into EC2 and mount EBS volume..."
+    - |
+      ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ubuntu@$EC2_IP <<'EOF'
         set -e
+        echo "📁 Creating mount point..."
         sudo mkdir -p /mnt/mongo-data
 
-        if ! blkid /dev/xvdf1; then
-          sudo mkfs -t ext4 /dev/xvdf || true
+        echo "🧪 Checking volume format..."
+        if ! sudo blkid /dev/xvdf; then
+          echo "🔧 Formatting volume..."
+          sudo mkfs -t ext4 /dev/xvdf
         fi
 
+        echo "📦 Mounting volume..."
         sudo mount /dev/xvdf /mnt/mongo-data || true
-        echo '/dev/xvdf /mnt/mongo-data ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
         sudo chown -R ubuntu:ubuntu /mnt/mongo-data
 
-        sudo apt-get update -y
-        sudo apt-get install -y docker.io curl
-        sudo systemctl enable --now docker
-        sudo usermod -aG docker ubuntu
+        echo "📝 Adding to fstab..."
+        echo '/dev/xvdf /mnt/mongo-data ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
+      EOF
 
-        sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose
-        sudo chmod +x /usr/local/bin/docker-compose
-      "
-
-    # Transfer and run Docker Compose
-    - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/
-    - ssh ubuntu@$EC2_IP "cd /home/ubuntu && docker-compose down && docker-compose pull && docker-compose up -d --remove-orphans"
 
   dependencies:
     - terraform_apply
