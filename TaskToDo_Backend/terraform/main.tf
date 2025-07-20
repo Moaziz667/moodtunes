@@ -2,8 +2,8 @@
 
 # Create custom VPC
 resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
-  enable_dns_support = true
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
   enable_dns_hostnames = true
 
   tags = {
@@ -13,16 +13,17 @@ resource "aws_vpc" "main" {
 
 # Create subnet
 resource "aws_subnet" "main_subnet" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.1.0/24"
-  availability_zone = "${var.aws_region}a"
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "${var.aws_region}a"
+  map_public_ip_on_launch = true
 
   tags = {
     Name = "main-subnet"
   }
 }
 
-# Create Internet Gateway
+# Internet Gateway
 resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.main.id
 
@@ -31,7 +32,7 @@ resource "aws_internet_gateway" "gw" {
   }
 }
 
-# Create Route Table
+# Route Table
 resource "aws_route_table" "main_rt" {
   vpc_id = aws_vpc.main.id
 
@@ -51,15 +52,24 @@ resource "aws_route_table_association" "a" {
   route_table_id = aws_route_table.main_rt.id
 }
 
-# Security Group for SSH access
+# Security Group (SSH + port 3000)
 resource "aws_security_group" "ssh_access" {
-  name        = "allow_ssh"
-  description = "Allow SSH access"
+  name        = "allow_ssh_and_app"
+  description = "Allow SSH and app access"
   vpc_id      = aws_vpc.main.id
 
   ingress {
+    description = "Allow SSH"
     from_port   = 22
     to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Allow port 3000 for app"
+    from_port   = 3000
+    to_port     = 3000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -72,7 +82,7 @@ resource "aws_security_group" "ssh_access" {
   }
 
   tags = {
-    Name = "allow_ssh"
+    Name = "allow_ssh_and_app"
   }
 }
 
@@ -93,16 +103,21 @@ data "aws_ami" "ubuntu" {
   owners = ["099720109477"] # Canonical
 }
 
-# EC2 instance
+# EC2 Instance
 resource "aws_instance" "ci_instance" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type
-  key_name               = var.key_name
-  subnet_id              = aws_subnet.main_subnet.id
-  vpc_security_group_ids = [aws_security_group.ssh_access.id]
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.instance_type
+  key_name                    = var.key_name
+  subnet_id                   = aws_subnet.main_subnet.id
+  vpc_security_group_ids      = [aws_security_group.ssh_access.id]
   associate_public_ip_address = true
+
+  depends_on = [
+    aws_route_table_association.a
+  ]
 
   tags = {
     Name = "ci-cd-ec2"
   }
 }
+
