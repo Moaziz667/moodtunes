@@ -4,100 +4,129 @@ services:
   - docker:dind
 
 stages:
-  - build_node
-  - build_flutter_android
-  - test
+  # - build_node
+  # - build_flutter_android
+  # - test
+  - infrastructure
   - deploy
-  - publish_pages
+  # - publish_pages
 
 variables:
   DOCKER_HOST: tcp://docker:2375
   DOCKER_TLS_CERTDIR: ""
   BACKEND_IMAGE: azizhk444/nodejserver
 
-build_flutter_apk:
-  stage: build_flutter_android
-  image: ghcr.io/cirruslabs/flutter:3.32.6
+# build_flutter_apk:
+#   stage: build_flutter_android
+#   image: ghcr.io/cirruslabs/flutter:3.32.6
+#   script:
+#     - cd tasktodo_frontend
+#     - flutter pub get
+#     - flutter build apk --release
+#     - APK_VERSION="v${CI_PIPELINE_IID}"
+#     - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk
+#     - mkdir -p public/apks
+#     - mv app-$APK_VERSION.apk public/apks/
+#     - |
+#       echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
+#       for apk in public/apks/app-*.apk; do
+#         echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
+#       done
+#       echo "</ul></body></html>" >> public/index.html
+#   artifacts:
+#     paths:
+#       - tasktodo_frontend/public
+#   only:
+#     - main
+
+# flutter_test:
+#   stage: test
+#   image: ghcr.io/cirruslabs/flutter:3.32.6
+#   tags:
+#     - my-vps
+#   script:
+#     - cd tasktodo_frontend
+#     - flutter pub get
+#     - flutter test --coverage
+#   artifacts:
+#     paths:
+#       - tasktodo_frontend/coverage/lcov.info
+#   only:
+#     - main
+
+# build_backend:
+#   stage: build_node
+#   script:
+#     - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+#     - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend
+#     - docker push $BACKEND_IMAGE
+#   tags:
+#     - my-vps
+#   only:
+#     - main
+
+terraform_apply:
+  stage: infrastructure
+  image:
+    name: hashicorp/terraform:light
+    entrypoint: [""]
+  variables:
+    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+    AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io
   script:
-    - cd tasktodo_frontend
-    - flutter pub get
-    - flutter build apk --release
-    - APK_VERSION="v${CI_PIPELINE_IID}"
-    - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk
-    - mkdir -p public/apks
-    - mv app-$APK_VERSION.apk public/apks/
-    - |
-      echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
-      for apk in public/apks/app-*.apk; do
-        echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
-      done
-      echo "</ul></body></html>" >> public/index.html
+    - cd terraform
+    - terraform init
+    - terraform apply -auto-approve
+    - terraform output -raw instance_public_ip > ../ec2_ip.txt
   artifacts:
     paths:
-      - tasktodo_frontend/public
+      - ec2_ip.txt
   only:
     - main
-
-flutter_test:
-  stage: test
-  image: ghcr.io/cirruslabs/flutter:3.32.6
   tags:
     - my-vps
-  script:
-    - cd tasktodo_frontend
-    - flutter pub get
-    - flutter test --coverage
-  artifacts:
-    paths:
-      - tasktodo_frontend/coverage/lcov.info
-  only:
-    - main
-
-build_backend:
-  stage: build_node
-  script:
-    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
-    - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend
-    - docker push $BACKEND_IMAGE
-  tags:
-    - my-vps
-  only:
-    - main
 
 deploy_app:
   stage: deploy
-  variables:
-    SSH_HOST: "185.44.67.203"
-    SSH_USER: "root"
-    SSH_PORT: "51821"
+  image: alpine:latest
   before_script:
-    - apk add --no-cache openssh
+    - apk add --no-cache openssh sshpass curl docker-compose
     - mkdir -p ~/.ssh
     - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
     - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
   script:
-    - scp -P $SSH_PORT TaskToDo_Backend/docker-compose.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
-    - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
-        docker compose -f /root/docker-compose.yml down &&
-        docker compose -f /root/docker-compose.yml pull &&
-        docker compose -f /root/docker-compose.yml up -d --build
-      "
+    - export EC2_IP=$(cat ec2_ip.txt)
+    - ssh ubuntu@$EC2_IP "sudo apt-get update -y && \
+      sudo apt-get install -y docker.io curl && \
+      sudo systemctl enable --now docker && \
+      sudo usermod -aG docker ubuntu && \
+      sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose && \
+      sudo chmod +x /usr/local/bin/docker-compose"
+    - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/
+    - ssh ubuntu@$EC2_IP "cd /home/ubuntu && \
+      docker-compose down && \
+      docker-compose pull && \
+      docker-compose up -d --remove-orphans"
+  dependencies:
+    - terraform_apply
   only:
     - main
   tags:
     - my-vps
 
-pages:
-  stage: publish_pages
-  dependencies:
-    - build_flutter_apk
-  script:
-    - cp -r tasktodo_frontend/public .
-  artifacts:
-    paths:
-      - public
-  only:
-    - main
-  tags:
-    - my-vps
+# pages:
+#   stage: publish_pages
+#   dependencies:
+#     - build_flutter_apk
+#   script:
+#     - cp -r tasktodo_frontend/public .
+#   artifacts:
+#     paths:
+#       - public
+#   only:
+#     - main
+#   tags:
+#     - my-vps
