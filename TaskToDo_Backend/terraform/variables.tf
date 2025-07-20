@@ -3,9 +3,9 @@ variable "aws_region" {
 }
 
 variable "instance_type" {
-  default = "t3.micro"  # Free tier in eu-north-1
+  default = "t3.micro"
 }
 
 variable "key_name" {
-  default = "gitlab-deploy-key"  
+  default = "gitlab-deploy-key"
 }
