@@ -143,7 +143,7 @@ setup_and_deploy_app:
     - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/
     - ssh ubuntu@$EC2_IP "cd /home/ubuntu && docker-compose down && docker-compose pull && docker-compose up -d --remove-orphans"
   dependencies:
-    - mount_ebs_volume
+    - terraform_apply
   only:
     - main
   tags:
