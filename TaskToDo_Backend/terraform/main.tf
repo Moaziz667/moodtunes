@@ -6,6 +6,9 @@ resource "aws_ebs_volume" "mongo_volume" {
   tags = {
     Name = "mongo-ebs-volume"
   }
+     lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Attach EBS Volume to EC2 instance
