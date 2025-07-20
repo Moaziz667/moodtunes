@@ -50,7 +50,6 @@ deploy_app:
   script:
     # Debug: Confirm AWS variables exist
     - echo "Checking AWS env vars..."
-    - echo "AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID" 
     - aws sts get-caller-identity || { echo '❌ AWS credentials are invalid'; exit 1; }
 
     # Get EC2 IP
