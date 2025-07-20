@@ -1,6 +1,4 @@
-provider "aws" {
-  region = var.aws_region
-}
+
 
 resource "aws_security_group" "ssh_access" {
   name        = "allow_ssh"
