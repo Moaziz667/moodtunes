@@ -125,20 +125,20 @@ setup_and_deploy_app:
     - export EC2_IP=$(cat ec2_ip.txt)
   script:
     - ssh ubuntu@$EC2_IP "
-        set -e
-        sudo mkdir -p /mnt/mongo-data
-        if ! blkid /dev/xvdf1; then sudo mkfs -t ext4 /dev/xvdf || true; fi
-        sudo mount /dev/xvdf /mnt/mongo-data || true
-        echo '/dev/xvdf /mnt/mongo-data ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
-        sudo chown -R ubuntu:ubuntu /mnt/mongo-data
+        set -e;
+        sudo mkdir -p /mnt/mongo-data;
+        if ! blkid /dev/xvdf1; then sudo mkfs -t ext4 /dev/xvdf || true; fi;
+        sudo mount /dev/xvdf /mnt/mongo-data || true;
+        echo '/dev/xvdf /mnt/mongo-data ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab;
+        sudo chown -R ubuntu:ubuntu /mnt/mongo-data;
 
-        sudo apt-get update -y
-        sudo apt-get install -y docker.io curl
-        sudo systemctl enable --now docker
-        sudo usermod -aG docker ubuntu
+        sudo apt-get update -y;
+        sudo apt-get install -y docker.io curl;
+        sudo systemctl enable --now docker;
+        sudo usermod -aG docker ubuntu;
 
-        sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose
-        sudo chmod +x /usr/local/bin/docker-compose
+        sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose;
+        sudo chmod +x /usr/local/bin/docker-compose;
       "
     - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/
     - ssh ubuntu@$EC2_IP "cd /home/ubuntu && docker-compose down && docker-compose pull && docker-compose up -d --remove-orphans"
@@ -148,6 +148,7 @@ setup_and_deploy_app:
     - main
   tags:
     - my-vps
+
 
 
 
