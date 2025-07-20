@@ -62,7 +62,9 @@ terraform_apply:
     - my-vps
 
 # --- Deploy App to EC2 with Mounted EBS Volume ---
-deploy_app:
+
+
+mount_ebs_volume:
   stage: deploy
   image:
     name: amazon/aws-cli:latest
@@ -71,35 +73,42 @@ deploy_app:
     AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
     AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
     AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
-
   before_script:
-    # Install needed tools inside the AWS CLI container
-    - apt install -y unzip bash curl openssh-clients sudo
-    - curl -fsSL https://get.docker.com | bash
-    - curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    - chmod +x /usr/local/bin/docker-compose
-
-    # Set up SSH
     - mkdir -p ~/.ssh
     - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
     - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
-
-    # Get IP and AWS instance/volume info
     - export EC2_IP=$(cat ec2_ip.txt)
     - export AWS_REGION="eu-north-1"
     - aws sts get-caller-identity --region $AWS_REGION
     - export VOLUME_ID=$(aws ec2 describe-volumes --filters Name=tag:Name,Values=mongo-ebs-volume --query 'Volumes[0].VolumeId' --region $AWS_REGION --output text)
     - export INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$EC2_IP" --query 'Reservations[0].Instances[0].InstanceId' --region $AWS_REGION --output text)
-
   script:
-    # Detach and attach volume
     - aws ec2 detach-volume --volume-id $VOLUME_ID --region $AWS_REGION || true
     - sleep 10
     - aws ec2 attach-volume --volume-id $VOLUME_ID --instance-id $INSTANCE_ID --device /dev/xvdf --region $AWS_REGION
-    - sleep 10
+  artifacts:
+    paths:
+      - ec2_ip.txt
+  only:
+    - main
+  tags:
+    - my-vps
 
-    # Mount EBS volume, set up Docker, and deploy
+
+setup_and_deploy_app:
+  stage: deploy
+  image: ubuntu:22.04
+  before_script:
+    - apt update && apt install -y curl openssh-client sudo docker.io unzip
+    - curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    - chmod +x /usr/local/bin/docker-compose
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+    - export EC2_IP=$(cat ec2_ip.txt)
+  script:
     - ssh ubuntu@$EC2_IP "
         set -e
         sudo mkdir -p /mnt/mongo-data
@@ -116,18 +125,14 @@ deploy_app:
         sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose
         sudo chmod +x /usr/local/bin/docker-compose
       "
-
-    # Transfer and run Docker Compose
     - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/
     - ssh ubuntu@$EC2_IP "cd /home/ubuntu && docker-compose down && docker-compose pull && docker-compose up -d --remove-orphans"
-
   dependencies:
-    - terraform_apply
+    - mount_ebs_volume
   only:
     - main
   tags:
     - my-vps
-
 
 
 # --- COMMENTED STAGES FOR FUTURE USE ---
