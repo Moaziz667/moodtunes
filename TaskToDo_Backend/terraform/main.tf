@@ -1,23 +1,4 @@
-# Add EBS Volume
-resource "aws_ebs_volume" "mongo_volume" {
-  availability_zone = aws_instance.ci_instance.availability_zone
-  size              = 20           # adjust size (GB) as needed
-  type              = "gp3"        # General purpose SSD
-  tags = {
-    Name = "mongo-ebs-volume"
-  }
-     lifecycle {
-    prevent_destroy = true
-  }
-}
 
-# Attach EBS Volume to EC2 instance
-resource "aws_volume_attachment" "mongo_volume_attachment" {
-  device_name = "/dev/xvdf"           # or "/dev/sdf", consistent with EC2 Linux
-  volume_id   = aws_ebs_volume.mongo_volume.id
-  instance_id = aws_instance.ci_instance.id
-  force_detach = true                 # forcibly detach if needed
-}
 
 
     # Create custom VPC

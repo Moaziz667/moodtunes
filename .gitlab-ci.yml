@@ -3,21 +3,68 @@ image: docker:latest
 services:
   - docker:dind
 
+stages:
+  - build_node
+  - build_flutter_android
+  - test
+  - infrastructure
+  - deploy
+  - publish_pages
+
 variables:
   DOCKER_HOST: tcp://docker:2375
   DOCKER_TLS_CERTDIR: ""
   BACKEND_IMAGE: azizhk444/nodejserver
 
-stages:
-  - infrastructure
-  - configure_flutter
-  - build_flutter_android
-  - test
-  - build_node
-  - deploy
-  - publish_pages
+build_flutter_apk:
+  stage: build_flutter_android
+  image: ghcr.io/cirruslabs/flutter:3.32.6
+  script:
+    - cd tasktodo_frontend
+    - flutter pub get
+    - flutter build apk --release
+    - APK_VERSION="v${CI_PIPELINE_IID}"
+    - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk
+    - mkdir -p public/apks
+    - mv app-$APK_VERSION.apk public/apks/
+    - |
+      echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
+      for apk in public/apks/app-*.apk; do
+        echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
+      done
+      echo "</ul></body></html>" >> public/index.html
+  artifacts:
+    paths:
+      - tasktodo_frontend/public
+  only:
+    - main
 
-# --- Provision AWS Infrastructure via Terraform ---
+flutter_test:
+  stage: test
+  image: ghcr.io/cirruslabs/flutter:3.32.6
+  tags:
+    - my-vps
+  script:
+    - cd tasktodo_frontend
+    - flutter pub get
+    - flutter test --coverage
+  artifacts:
+    paths:
+      - tasktodo_frontend/coverage/lcov.info
+  only:
+    - main
+
+build_backend:
+  stage: build_node
+  script:
+    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+    - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend
+    - docker push $BACKEND_IMAGE
+  tags:
+    - my-vps
+  only:
+    - main
+
 terraform_apply:
   stage: infrastructure
   image:
@@ -41,157 +88,28 @@ terraform_apply:
   tags:
     - my-vps
 
-# --- Update Flutter Config with EC2 IP ---
-update_flutter_config:
-  stage: configure_flutter
+deploy_app:
+  stage: deploy
   image: alpine:latest
-  script:
-    - apk add --no-cache curl bash
-    - export EC2_IP=$(cat ec2_ip.txt)
-    - sed -i "s|final url = .*|final url = 'http://$EC2_IP:3000/';|" tasktodo_frontend/lib/config.dart
-  artifacts:
-    paths:
-      - tasktodo_frontend/lib/config.dart
-  dependencies:
-    - terraform_apply
-  only:
-    - main
-  tags:
-    - my-vps
-
-# --- Build Flutter Android APK ---
-build_flutter_apk:
-  stage: build_flutter_android
-  image: ghcr.io/cirruslabs/flutter:3.32.6
-  dependencies:
-    - update_flutter_config
-  script:
-    - cd tasktodo_frontend
-    - flutter pub get
-    - flutter build apk --release
-    - APK_VERSION="v${CI_PIPELINE_IID}"
-    - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk
-    - mkdir -p public/apks
-    - mv app-$APK_VERSION.apk public/apks/
-    - |
-      echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
-      for apk in public/apks/app-*.apk; do
-        echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
-      done
-      echo "</ul></body></html>" >> public/index.html
-  artifacts:
-    paths:
-      - tasktodo_frontend/public
-  only:
-    - main
-
-# --- Run Flutter Tests ---
-flutter_test:
-  stage: test
-  image: ghcr.io/cirruslabs/flutter:3.32.6
-  tags:
-    - my-vps
-  script:
-    - cd tasktodo_frontend
-    - flutter pub get
-    - flutter test --coverage
-  artifacts:
-    paths:
-      - tasktodo_frontend/coverage/lcov.info
-  only:
-    - main
-
-# --- Build & Push Node.js Backend Docker Image ---
-build_backend:
-  stage: build_node
-  script:
-    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
-    - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend
-    - docker push $BACKEND_IMAGE
-  tags:
-    - my-vps
-  only:
-    - main
-
-# --- Mount EBS Volume on EC2 ---
-mount_ebs_volume:
-  stage: deploy
-  image:
-    name: amazon/aws-cli:latest
-    entrypoint: [""]
-  variables:
-    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
-    AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
-    AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
   before_script:
+    - apk add --no-cache openssh sshpass curl docker-compose
     - mkdir -p ~/.ssh
     - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
     - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
-    - export EC2_IP=$(cat ec2_ip.txt)
-    - export AWS_REGION="eu-north-1"
-    - aws sts get-caller-identity --region $AWS_REGION
-    - export VOLUME_ID=$(aws ec2 describe-volumes --filters Name=tag:Name,Values=mongo-ebs-volume --query 'Volumes[0].VolumeId' --region $AWS_REGION --output text)
-    - export INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$EC2_IP" --query 'Reservations[0].Instances[0].InstanceId' --region $AWS_REGION --output text)
   script:
-    - |
-      echo "Checking if volume is attached..."
-      ATTACHMENT_STATE=$(aws ec2 describe-volumes \
-        --volume-ids $VOLUME_ID \
-        --query "Volumes[0].Attachments[0].State" \
-        --output text \
-        --region $AWS_REGION 2>/dev/null || echo "detached")
-
-      if [ "$ATTACHMENT_STATE" = "attached" ]; then
-        echo "Detaching volume..."
-        aws ec2 detach-volume --volume-id $VOLUME_ID --region $AWS_REGION
-        sleep 10
-      else
-        echo "Volume is already detached. Skipping detach."
-      fi
-
-      echo "Attaching volume..."
-      aws ec2 attach-volume --volume-id $VOLUME_ID --instance-id $INSTANCE_ID --device /dev/xvdf --region $AWS_REGION || echo "Already attached or in use"
-  artifacts:
-    paths:
-      - ec2_ip.txt
-  only:
-    - main
-  tags:
-    - my-vps
-
-# --- Set Up & Deploy App on EC2 ---
-setup_and_deploy_app:
-  stage: deploy
-  image: ubuntu:22.04
-  before_script:
-    - apt update && apt install -y curl openssh-client sudo docker.io unzip
-    - curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    - chmod +x /usr/local/bin/docker-compose
-    - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-    - chmod 600 ~/.ssh/id_rsa
-    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
     - export EC2_IP=$(cat ec2_ip.txt)
-  script:
-    - ssh ubuntu@$EC2_IP "
-        set -e;
-        sudo mkdir -p /mnt/mongo-data;
-        if ! blkid /dev/xvdf1; then sudo mkfs -t ext4 /dev/xvdf || true; fi;
-        sudo mount /dev/xvdf /mnt/mongo-data || true;
-        echo '/dev/xvdf /mnt/mongo-data ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab;
-        sudo chown -R ubuntu:ubuntu /mnt/mongo-data;
-
-        sudo apt-get update -y;
-        sudo apt-get install -y docker.io curl;
-        sudo systemctl enable --now docker;
-        sudo usermod -aG docker ubuntu;
-
-        sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose;
-        sudo chmod +x /usr/local/bin/docker-compose;
-      "
+    - ssh ubuntu@$EC2_IP "sudo apt-get update -y && \
+      sudo apt-get install -y docker.io curl && \
+      sudo systemctl enable --now docker && \
+      sudo usermod -aG docker ubuntu && \
+      sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose && \
+      sudo chmod +x /usr/local/bin/docker-compose"
     - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/
-    - ssh ubuntu@$EC2_IP "cd /home/ubuntu && docker-compose down && docker-compose pull && docker-compose up -d --remove-orphans"
+    - ssh ubuntu@$EC2_IP "cd /home/ubuntu && \
+      docker-compose down && \
+      docker-compose pull && \
+      docker-compose up -d --remove-orphans"
   dependencies:
     - terraform_apply
   only:
@@ -199,7 +117,6 @@ setup_and_deploy_app:
   tags:
     - my-vps
 
-# --- Publish APK Download Page ---
 pages:
   stage: publish_pages
   dependencies:
