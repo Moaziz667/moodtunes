@@ -38,55 +38,89 @@ terraform_apply:
 
 # --- Deploy App to EC2 with Mounted EBS Volume ---
 
-deploy_app:
-  image: amazon/aws-cli:latest
-  stage: deploy
-  services:
-    - docker:dind
+terraform_apply:
+  stage: infrastructure
+  image:
+    name: hashicorp/terraform:light
+    entrypoint: [""]
   variables:
     AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
     AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
     AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io
   script:
-    # Debug: Confirm AWS variables exist
-    - echo "Checking AWS env vars..."
-    - aws sts get-caller-identity || { echo '❌ AWS credentials are invalid'; exit 1; }
+    - cd TaskToDo_Backend/terraform
+    - terraform init
+    - terraform apply -auto-approve
+    - terraform output -raw instance_public_ip > ../../ec2_ip.txt
+  artifacts:
+    paths:
+      - ec2_ip.txt
+  only:
+    - main
+  tags:
+    - my-vps
 
-    # Get EC2 IP
-    - echo "📦 Reading EC2 IP from file..."
-    - cat ec2_ip.txt || { echo "❌ ec2_ip.txt missing"; exit 1; }
+# --- Deploy App to EC2 with Mounted EBS Volume ---
+deploy_app:
+  stage: deploy
+  image: 
+    name: amazon/aws-cli:latest
+    entrypoint: [""]
+  variables:
+    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+    AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+  before_script:
+    - apk add --no-cache openssh sshpass curl docker-compose bash
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
     - export EC2_IP=$(cat ec2_ip.txt)
-    - if [ -z "$EC2_IP" ]; then echo "❌ EC2_IP is empty"; exit 1; fi
-    - echo "✅ EC2_IP = $EC2_IP"
+    - export AWS_REGION="eu-north-1"
 
-    # Get EC2 instance ID using IP
-    - echo "🔍 Getting EC2 instance ID..."
-    - export INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$EC2_IP" --query 'Reservations[0].Instances[0].InstanceId' --output text)
-    - if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then echo "❌ Failed to get EC2 instance ID"; exit 1; fi
-    - echo "✅ Instance ID = $INSTANCE_ID"
+    # Validate AWS CLI and region
+    - aws sts get-caller-identity --region $AWS_REGION
 
-    # Mount EBS volume to EC2 via SSH
-    - echo "🔗 SSH into EC2 and mount EBS volume..."
-    - |
-      ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ubuntu@$EC2_IP <<'EOF'
+    # Lookup EBS volume and EC2 instance ID
+    - export VOLUME_ID=$(aws ec2 describe-volumes --filters Name=tag:Name,Values=mongo-ebs-volume --query 'Volumes[0].VolumeId' --region $AWS_REGION --output text)
+    - export INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$EC2_IP" --query 'Reservations[0].Instances[0].InstanceId' --region $AWS_REGION --output text)
+
+  script:
+    # Detach (if already attached)
+    - aws ec2 detach-volume --volume-id $VOLUME_ID --region $AWS_REGION || true
+    - sleep 10
+
+    # Attach to new EC2 instance
+    - aws ec2 attach-volume --volume-id $VOLUME_ID --instance-id $INSTANCE_ID --device /dev/xvdf --region $AWS_REGION
+    - sleep 10
+
+    # Mount, format, and set up Docker & Docker Compose
+    - ssh ubuntu@$EC2_IP "
         set -e
-        echo "📁 Creating mount point..."
         sudo mkdir -p /mnt/mongo-data
 
-        echo "🧪 Checking volume format..."
-        if ! sudo blkid /dev/xvdf; then
-          echo "🔧 Formatting volume..."
-          sudo mkfs -t ext4 /dev/xvdf
+        if ! blkid /dev/xvdf1; then
+          sudo mkfs -t ext4 /dev/xvdf || true
         fi
 
-        echo "📦 Mounting volume..."
         sudo mount /dev/xvdf /mnt/mongo-data || true
+        echo '/dev/xvdf /mnt/mongo-data ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
         sudo chown -R ubuntu:ubuntu /mnt/mongo-data
 
-        echo "📝 Adding to fstab..."
-        echo '/dev/xvdf /mnt/mongo-data ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
-      EOF
+        sudo apt-get update -y
+        sudo apt-get install -y docker.io curl
+        sudo systemctl enable --now docker
+        sudo usermod -aG docker ubuntu
 
+        sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
+      "
+
+    # Transfer and run Docker Compose
+    - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/
+    - ssh ubuntu@$EC2_IP "cd /home/ubuntu && docker-compose down && docker-compose pull && docker-compose up -d --remove-orphans"
 
   dependencies:
     - terraform_apply
@@ -94,7 +128,6 @@ deploy_app:
     - main
   tags:
     - my-vps
-
 
 # --- COMMENTED STAGES FOR FUTURE USE ---
 # update_flutter_config:
