@@ -4,66 +4,18 @@ services:
   - docker:dind
 
 stages:
-  # - build_node
-  # - build_flutter_android
-  # - test
   - infrastructure
+  - configure_flutter
+  - build_flutter_android
+  - test
+  - build_node
   - deploy
-  # - publish_pages
+  - publish_pages
 
 variables:
   DOCKER_HOST: tcp://docker:2375
   DOCKER_TLS_CERTDIR: ""
   BACKEND_IMAGE: azizhk444/nodejserver
-
-# build_flutter_apk:
-#   stage: build_flutter_android
-#   image: ghcr.io/cirruslabs/flutter:3.32.6
-#   script:
-#     - cd tasktodo_frontend
-#     - flutter pub get
-#     - flutter build apk --release
-#     - APK_VERSION="v${CI_PIPELINE_IID}"
-#     - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk
-#     - mkdir -p public/apks
-#     - mv app-$APK_VERSION.apk public/apks/
-#     - |
-#       echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
-#       for apk in public/apks/app-*.apk; do
-#         echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
-#       done
-#       echo "</ul></body></html>" >> public/index.html
-#   artifacts:
-#     paths:
-#       - tasktodo_frontend/public
-#   only:
-#     - main
-
-# flutter_test:
-#   stage: test
-#   image: ghcr.io/cirruslabs/flutter:3.32.6
-#   tags:
-#     - my-vps
-#   script:
-#     - cd tasktodo_frontend
-#     - flutter pub get
-#     - flutter test --coverage
-#   artifacts:
-#     paths:
-#       - tasktodo_frontend/coverage/lcov.info
-#   only:
-#     - main
-
-# build_backend:
-#   stage: build_node
-#   script:
-#     - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
-#     - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend
-#     - docker push $BACKEND_IMAGE
-#   tags:
-#     - my-vps
-#   only:
-#     - main
 
 terraform_apply:
   stage: infrastructure
@@ -80,7 +32,6 @@ terraform_apply:
     - terraform init
     - terraform apply -auto-approve
     - terraform output -raw instance_public_ip > ../../ec2_ip.txt
-
   artifacts:
     paths:
       - ec2_ip.txt
@@ -88,6 +39,74 @@ terraform_apply:
     - main
   tags:
     - my-vps
+
+update_flutter_config:
+  stage: configure_flutter
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl bash
+    - export EC2_IP=$(cat ec2_ip.txt)
+    - sed -i "s|final url = .*|final url = 'http://$EC2_IP:3000/';|" tasktodo_frontend/lib/config.dart
+  artifacts:
+    paths:
+      - tasktodo_frontend/lib/config.dart
+  dependencies:
+    - terraform_apply
+  only:
+    - main
+  tags:
+    - my-vps
+
+build_flutter_apk:
+  stage: build_flutter_android
+  image: ghcr.io/cirruslabs/flutter:3.32.6
+  dependencies:
+    - update_flutter_config
+  script:
+    - cd tasktodo_frontend
+    - flutter pub get
+    - flutter build apk --release
+    - APK_VERSION="v${CI_PIPELINE_IID}"
+    - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk
+    - mkdir -p public/apks
+    - mv app-$APK_VERSION.apk public/apks/
+    - |
+      echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
+      for apk in public/apks/app-*.apk; do
+        echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
+      done
+      echo "</ul></body></html>" >> public/index.html
+  artifacts:
+    paths:
+      - tasktodo_frontend/public
+  only:
+    - main
+
+flutter_test:
+  stage: test
+  image: ghcr.io/cirruslabs/flutter:3.32.6
+  tags:
+    - my-vps
+  script:
+    - cd tasktodo_frontend
+    - flutter pub get
+    - flutter test --coverage
+  artifacts:
+    paths:
+      - tasktodo_frontend/coverage/lcov.info
+  only:
+    - main
+
+build_backend:
+  stage: build_node
+  script:
+    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+    - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend
+    - docker push $BACKEND_IMAGE
+  tags:
+    - my-vps
+  only:
+    - main
 
 deploy_app:
   stage: deploy
@@ -110,17 +129,16 @@ deploy_app:
   tags:
     - my-vps
 
-
-# pagesQ:
-#   stage: publish_pages
-#   dependencies:
-#     - build_flutter_apk
-#   script:
-#     - cp -r tasktodo_frontend/public .
-#   artifacts:
-#     paths:
-#       - public
-#   only:
-#     - main
-#   tags:
-#     - my-vps
+pages:
+  stage: publish_pages
+  dependencies:
+    - build_flutter_apk
+  script:
+    - cp -r tasktodo_frontend/public .
+  artifacts:
+    paths:
+      - public
+  only:
+    - main
+  tags:
+    - my-vps
