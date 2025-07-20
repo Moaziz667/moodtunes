@@ -40,6 +40,10 @@ terraform_apply:
 deploy_app:
   stage: deploy
   image: amazon/aws-cli:latest
+  variables:
+    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+    AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
   before_script:
     - apk add --no-cache openssh sshpass curl docker-compose bash
     - mkdir -p ~/.ssh
@@ -48,17 +52,26 @@ deploy_app:
     - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
     - export EC2_IP=$(cat ec2_ip.txt)
     - export AWS_REGION="eu-north-1"
+
+    # Validate AWS CLI and region
+    - aws sts get-caller-identity --region $AWS_REGION
+
+    # Lookup EBS volume and EC2 instance ID
     - export VOLUME_ID=$(aws ec2 describe-volumes --filters Name=tag:Name,Values=mongo-ebs-volume --query 'Volumes[0].VolumeId' --region $AWS_REGION --output text)
     - export INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$EC2_IP" --query 'Reservations[0].Instances[0].InstanceId' --region $AWS_REGION --output text)
+
   script:
-    # Detach volume from old EC2 (if still attached)
+    # Detach (if already attached)
     - aws ec2 detach-volume --volume-id $VOLUME_ID --region $AWS_REGION || true
     - sleep 10
-    # Attach volume to new EC2 instance
+
+    # Attach to new EC2 instance
     - aws ec2 attach-volume --volume-id $VOLUME_ID --instance-id $INSTANCE_ID --device /dev/xvdf --region $AWS_REGION
     - sleep 10
-    # SSH: format/mount EBS volume, install Docker & Compose, deploy app
+
+    # Mount, format, and set up Docker & Docker Compose
     - ssh ubuntu@$EC2_IP "
+        set -e
         sudo mkdir -p /mnt/mongo-data
 
         if ! blkid /dev/xvdf1; then
@@ -73,18 +86,22 @@ deploy_app:
         sudo apt-get install -y docker.io curl
         sudo systemctl enable --now docker
         sudo usermod -aG docker ubuntu
-        sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose
+
+        sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose
         sudo chmod +x /usr/local/bin/docker-compose
       "
-    # Transfer and start the Docker stack
+
+    # Transfer and run Docker Compose
     - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/
     - ssh ubuntu@$EC2_IP "cd /home/ubuntu && docker-compose down && docker-compose pull && docker-compose up -d --remove-orphans"
+
   dependencies:
     - terraform_apply
   only:
     - main
   tags:
     - my-vps
+
 
 # --- COMMENTED STAGES FOR FUTURE USE ---
 # update_flutter_config:
