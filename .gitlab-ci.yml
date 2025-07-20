@@ -1,143 +1,119 @@
-image: docker:latest  # Use Docker image with Docker CLI pre-installed
+image: docker:latest
 
 services:
-  - docker:dind        # Docker-in-Docker for building/pushing images (used in build stages if enabled)
-
-                    # Use Docker-in-Docker service to build Docker images inside pipeline
-
-stages:
-  - infrastructure                  # Stage to provision infrastructure with Terraform
-  - configure_flutter              # Stage to update Flutter app config with backend IP
-  - build_flutter_android          # Stage to build Flutter Android APK
-  - test                          # Stage to run Flutter tests
-  - build_node                    # Stage to build and push backend Docker image
-  - deploy                       # Stage to deploy backend app on EC2 instance
-  - publish_pages                # Stage to publish APK download page via GitLab Pages
-        # Docker deployment to EC2 instance
+  - docker:dind
 
 variables:
   DOCKER_HOST: tcp://docker:2375
   DOCKER_TLS_CERTDIR: ""
   BACKEND_IMAGE: azizhk444/nodejserver
-update_flutter_config:
-  stage: configure_flutter
-  image: alpine:latest                        # Use lightweight Alpine Linux image for scripting
+
+stages:
+  - infrastructure
+  - configure_flutter
+  - build_flutter_android
+  - test
+  - build_node
+  - deploy
+  - publish_pages
+
+# --- Provision AWS Infrastructure via Terraform ---
+terraform_apply:
+  stage: infrastructure
+  image:
+    name: hashicorp/terraform:light
+    entrypoint: [""]
+  variables:
+    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+    AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io
   script:
-    - apk add --no-cache curl bash            # Install curl and bash in Alpine
-    - export EC2_IP=$(cat ec2_ip.txt)         # Read the EC2 IP from the artifact file
-    - sed -i "s|final url = .*|final url = 'http://$EC2_IP:3000/';|" tasktodo_frontend/lib/config.dart  
-      # Replace the backend URL in Flutter config with the new EC2 IP dynamically
+    - cd TaskToDo_Backend/terraform
+    - terraform init
+    - terraform apply -auto-approve
+    - terraform output -raw instance_public_ip > ../../ec2_ip.txt
   artifacts:
     paths:
-      - tasktodo_frontend/lib/config.dart     # Save updated config file for next job
-  dependencies:
-    - terraform_apply                         # Depends on terraform_apply to get ec2_ip.txt
+      - ec2_ip.txt
   only:
     - main
   tags:
     - my-vps
+
+# --- Update Flutter Config with EC2 IP ---
+update_flutter_config:
+  stage: configure_flutter
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl bash
+    - export EC2_IP=$(cat ec2_ip.txt)
+    - sed -i "s|final url = .*|final url = 'http://$EC2_IP:3000/';|" tasktodo_frontend/lib/config.dart
+  artifacts:
+    paths:
+      - tasktodo_frontend/lib/config.dart
+  dependencies:
+    - terraform_apply
+  only:
+    - main
+  tags:
+    - my-vps
+
+# --- Build Flutter Android APK ---
 build_flutter_apk:
   stage: build_flutter_android
-  image: ghcr.io/cirruslabs/flutter:3.32.6  # Flutter SDK image with necessary tools pre-installed
+  image: ghcr.io/cirruslabs/flutter:3.32.6
   dependencies:
-    - update_flutter_config                   # Use updated Flutter config from previous job
+    - update_flutter_config
   script:
-    - cd tasktodo_frontend                    # Navigate to Flutter frontend directory
-    - flutter pub get                         # Fetch Flutter dependencies
-    - flutter build apk --release             # Build release APK for Android
-    - APK_VERSION="v${CI_PIPELINE_IID}"       # Set APK version based on pipeline ID (unique build number)
-    - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk  # Rename APK with version
-    - mkdir -p public/apks                     # Create directory to hold APKs for download page
-    - mv app-$APK_VERSION.apk public/apks/    # Move APK to public directory for GitLab Pages
+    - cd tasktodo_frontend
+    - flutter pub get
+    - flutter build apk --release
+    - APK_VERSION="v${CI_PIPELINE_IID}"
+    - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk
+    - mkdir -p public/apks
+    - mv app-$APK_VERSION.apk public/apks/
     - |
       echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
       for apk in public/apks/app-*.apk; do
         echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
       done
-      echo "</ul></body></html>" >> public/index.html  # Generate simple HTML page listing APK downloads
+      echo "</ul></body></html>" >> public/index.html
   artifacts:
     paths:
-      - tasktodo_frontend/public               # Save public directory (APK + index.html) for next stage
-  only:
-    - main
-flutter_test:
-  stage: test
-  image: ghcr.io/cirruslabs/flutter:3.32.6  # Same Flutter SDK image for tests
-  tags:
-    - my-vps
-  script:
-    - cd tasktodo_frontend                    # Move to Flutter frontend directory
-    - flutter pub get                         # Get dependencies for tests
-    - flutter test --coverage                 # Run tests and collect coverage info
-  artifacts:
-    paths:
-      - tasktodo_frontend/coverage/lcov.info # Save test coverage report as artifact
+      - tasktodo_frontend/public
   only:
     - main
 
+# --- Run Flutter Tests ---
+flutter_test:
+  stage: test
+  image: ghcr.io/cirruslabs/flutter:3.32.6
+  tags:
+    - my-vps
+  script:
+    - cd tasktodo_frontend
+    - flutter pub get
+    - flutter test --coverage
+  artifacts:
+    paths:
+      - tasktodo_frontend/coverage/lcov.info
+  only:
+    - main
+
+# --- Build & Push Node.js Backend Docker Image ---
 build_backend:
   stage: build_node
   script:
-    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"  # Log in to Docker registry
-    - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend          # Build backend Docker image
-    - docker push $BACKEND_IMAGE                                 # Push backend image to Docker registry
+    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+    - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend
+    - docker push $BACKEND_IMAGE
   tags:
     - my-vps
   only:
     - main
 
-# --- Terraform: Provision Infrastructure on AWS ---
-terraform_apply:
-  stage: infrastructure
-  image:
-    name: hashicorp/terraform:light
-    entrypoint: [""]
-  variables:
-    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
-    AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
-    AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
-    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io
-  script:
-    - cd TaskToDo_Backend/terraform
-    - terraform init
-    - terraform apply -auto-approve
-    - terraform output -raw instance_public_ip > ../../ec2_ip.txt
-  artifacts:
-    paths:
-      - ec2_ip.txt
-  only:
-    - main
-  tags:
-    - my-vps
-
-# --- Deploy App to EC2 with Mounted EBS Volume ---
-
-terraform_apply:
-  stage: infrastructure
-  image:
-    name: hashicorp/terraform:light
-    entrypoint: [""]
-  variables:
-    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
-    AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
-    AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
-    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io
-  script:
-    - cd TaskToDo_Backend/terraform
-    - terraform init
-    - terraform apply -auto-approve
-    - terraform output -raw instance_public_ip > ../../ec2_ip.txt
-  artifacts:
-    paths:
-      - ec2_ip.txt
-  only:
-    - main
-  tags:
-    - my-vps
-
-# --- Deploy App to EC2 with Mounted EBS Volume ---
-
-
+# --- Mount EBS Volume on EC2 ---
 mount_ebs_volume:
   stage: deploy
   image:
@@ -174,7 +150,6 @@ mount_ebs_volume:
         echo "Volume is already detached. Skipping detach."
       fi
 
-    - |
       echo "Attaching volume..."
       aws ec2 attach-volume --volume-id $VOLUME_ID --instance-id $INSTANCE_ID --device /dev/xvdf --region $AWS_REGION || echo "Already attached or in use"
   artifacts:
@@ -185,6 +160,7 @@ mount_ebs_volume:
   tags:
     - my-vps
 
+# --- Set Up & Deploy App on EC2 ---
 setup_and_deploy_app:
   stage: deploy
   image: ubuntu:22.04
@@ -223,35 +199,17 @@ setup_and_deploy_app:
   tags:
     - my-vps
 
-
-
-
-# --- COMMENTED STAGES FOR FUTURE USE ---
-# update_flutter_config:
-# build_flutter_apk:
-# flutter_test:
-# build_backend:
-# pages:
+# --- Publish APK Download Page ---
 pages:
   stage: publish_pages
   dependencies:
-    - build_flutter_apk                                          # Depends on APK build artifacts
+    - build_flutter_apk
   script:
-    - cp -r tasktodo_frontend/public .                            # Copy public folder to root for GitLab Pages hosting
+    - cp -r tasktodo_frontend/public .
   artifacts:
     paths:
-      - public                                                  # Publish public folder for GitLab Pages
+      - public
   only:
     - main
   tags:
     - my-vps
-build_backend:
-   stage: build_node
-   script:
-     - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
-     - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend
-    - docker push $BACKEND_IMAGE
-   tags:
-     - my-vps
-  only:
-     - main
