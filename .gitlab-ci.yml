@@ -118,7 +118,7 @@ deploy_app:
   tags:
     - my-vps
 
-# pages:
+# pagesQ:
 #   stage: publish_pages
 #   dependencies:
 #     - build_flutter_apk
