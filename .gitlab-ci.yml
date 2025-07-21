@@ -4,12 +4,9 @@ services:
   - docker:dind
 
 stages:
-  - build_node
- # - build_flutter_android
-  - test
+  
   - infrastructure
   - deploy
-  - publish_pages
 
 variables:
   DOCKER_HOST: tcp://docker:2375
@@ -18,31 +15,7 @@ variables:
 
 
 
-flutter_test:
-  stage: test
-  image: ghcr.io/cirruslabs/flutter:3.32.6
-  tags:
-    - my-vps
-  script:
-    - cd tasktodo_frontend
-    - flutter pub get
-    - flutter test --coverage
-  artifacts:
-    paths:
-      - tasktodo_frontend/coverage/lcov.info
-  only:
-    - main
 
-build_backend:
-  stage: build_node
-  script:
-    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
-    - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend
-    - docker push $BACKEND_IMAGE
-  tags:
-    - my-vps
-  only:
-    - main
 
 terraform_apply:
   stage: infrastructure
@@ -96,16 +69,3 @@ deploy_app:
   tags:
     - my-vps
 
-pages:
-  stage: publish_pages
-  dependencies:
-    - build_flutter_apk
-  script:
-    - cp -r tasktodo_frontend/public .
-  artifacts:
-    paths:
-      - public
-  only:
-    - main
-  tags:
-    - my-vps
