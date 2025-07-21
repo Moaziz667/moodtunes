@@ -109,6 +109,37 @@ build_backend:
   only:
     - main
 
+
+
+deploy_staging:
+  stage: deploy
+  variables:
+    SSH_HOST: "185.44.67.203"
+    SSH_USER: "root"
+    SSH_PORT: "51821"
+  before_script:
+    - apk add --no-cache openssh
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+  script:
+    - scp -P $SSH_PORT TaskToDo_Backend/docker-compose.staging.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
+    - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
+        docker compose -f /root/docker-compose.yml down &&
+        docker compose -f /root/docker-compose.yml pull &&
+        docker compose -f /root/docker-compose.yml up -d --build
+      "
+  only:
+    - main
+  tags:
+    - my-vps
+  environment:
+    name: staging
+  
+
+
+
 deploy_app:
   stage: deploy
   image: alpine:latest
@@ -129,8 +160,13 @@ deploy_app:
     - terraform_apply                                             # Must run after infrastructure provision
   only:
     - main
+  environment:
+    name: production
+  when: manual                                            # Manual deployment trigger
   tags:
     - my-vps
+  needs:
+    - deploy_staging
 
 pages:
   stage: publish_pages
