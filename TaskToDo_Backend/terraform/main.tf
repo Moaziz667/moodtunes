@@ -123,7 +123,7 @@ data "aws_ebs_volume" "docker_volume" {
     subnet_id                   = aws_subnet.main_subnet.id
     vpc_security_group_ids      = [aws_security_group.ssh_access.id]
     associate_public_ip_address = true
-userdata = <<-EOF
+user_data = <<-EOF
 #!/bin/bash
 set -eux
 
