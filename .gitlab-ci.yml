@@ -1,64 +1,147 @@
-image: docker:latest
+image: docker:latest                  # Use Docker image with Docker CLI pre-installed
 
 services:
-  - docker:dind
+  - docker:dind                      # Use Docker-in-Docker service to build Docker images inside pipeline
 
 stages:
-  
-  - infrastructure
-  - deploy
+  - infrastructure                  # Stage to provision infrastructure with Terraform
+  - configure_flutter              # Stage to update Flutter app config with backend IP
+  - build_flutter_android          # Stage to build Flutter Android APK
+  - test                          # Stage to run Flutter tests
+  - build_node                    # Stage to build and push backend Docker image
+  - deploy                       # Stage to deploy backend app on EC2 instance
+  - publish_pages                # Stage to publish APK download page via GitLab Pages
 
 variables:
-  DOCKER_HOST: tcp://docker:2375
-  DOCKER_TLS_CERTDIR: ""
-  BACKEND_IMAGE: azizhk444/nodejserver
-
-
-#C
-
+  DOCKER_HOST: tcp://docker:2375  # Docker daemon TCP address for Docker-in-Docker
+  DOCKER_TLS_CERTDIR: ""           # Disable TLS cert directory for Docker daemon (required for DinD)
+  BACKEND_IMAGE: azizhk444/nodejserver  # Docker image tag for backend app
 
 terraform_apply:
   stage: infrastructure
   image:
-    name: hashicorp/terraform:light
-    entrypoint: [""]
+    name: hashicorp/terraform:light # Terraform official image (lightweight)
+    entrypoint: [""]                # Override entrypoint for terraform CLI commands
   variables:
-    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID      # AWS credentials from CI variables
     AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
     AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
-    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io
+    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io  # Terraform Cloud API token (if using)
   script:
-    - cd TaskToDo_Backend/terraform
-    - terraform init
-    - terraform apply -auto-approve
-    - terraform output -raw instance_public_ip > ../../ec2_ip.txt
+    - cd TaskToDo_Backend/terraform             # Move into Terraform config directory
+    - terraform init                            # Initialize Terraform (download providers, modules)
+    - terraform apply -auto-approve            # Apply Terraform config, auto-approve without prompt
+    - terraform output -raw instance_public_ip > ../../ec2_ip.txt  # Extract EC2 public IP and save it to file for later use
   artifacts:
     paths:
-      - ec2_ip.txt
+      - ec2_ip.txt                             # Save EC2 IP as artifact to share with downstream jobs
+  only:
+    - main                                    # Run this job only on main branch
+  tags:
+    - my-vps                                  # Run job on runners tagged with 'my-vps'
+
+update_flutter_config:
+  stage: configure_flutter
+  image: alpine:latest                        # Use lightweight Alpine Linux image for scripting
+  script:
+    - apk add --no-cache curl bash            # Install curl and bash in Alpine
+    - export EC2_IP=$(cat ec2_ip.txt)         # Read the EC2 IP from the artifact file
+    - sed -i "s|final url = .*|final url = 'http://$EC2_IP:3000/';|" tasktodo_frontend/lib/config.dart  
+      # Replace the backend URL in Flutter config with the new EC2 IP dynamically
+  artifacts:
+    paths:
+      - tasktodo_frontend/lib/config.dart     # Save updated config file for next job
+  dependencies:
+    - terraform_apply                         # Depends on terraform_apply to get ec2_ip.txt
   only:
     - main
   tags:
     - my-vps
+
+build_flutter_apk:
+  stage: build_flutter_android
+  image: ghcr.io/cirruslabs/flutter:3.32.6  # Flutter SDK image with necessary tools pre-installed
+  dependencies:
+    - update_flutter_config                   # Use updated Flutter config from previous job
+  script:
+    - cd tasktodo_frontend                    # Navigate to Flutter frontend directory
+    - flutter pub get                         # Fetch Flutter dependencies
+    - flutter build apk --release             # Build release APK for Android
+    - APK_VERSION="v${CI_PIPELINE_IID}"       # Set APK version based on pipeline ID (unique build number)
+    - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk  # Rename APK with version
+    - mkdir -p public/apks                     # Create directory to hold APKs for download page
+    - mv app-$APK_VERSION.apk public/apks/    # Move APK to public directory for GitLab Pages
+    - |
+      echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
+      for apk in public/apks/app-*.apk; do
+        echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
+      done
+      echo "</ul></body></html>" >> public/index.html  # Generate simple HTML page listing APK downloads
+  artifacts:
+    paths:
+      - tasktodo_frontend/public               # Save public directory (APK + index.html) for next stage
+  only:
+    - main
+
+flutter_test:
+  stage: test
+  image: ghcr.io/cirruslabs/flutter:3.32.6  # Same Flutter SDK image for tests
+  tags:
+    - my-vps
+  script:
+    - cd tasktodo_frontend                    # Move to Flutter frontend directory
+    - flutter pub get                         # Get dependencies for tests
+    - flutter test --coverage                 # Run tests and collect coverage info
+  artifacts:
+    paths:
+      - tasktodo_frontend/coverage/lcov.info # Save test coverage report as artifact
+  only:
+    - main
+
+build_backend:
+  stage: build_node
+  script:
+    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"  # Log in to Docker registry
+    - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend          # Build backend Docker image
+    - docker push $BACKEND_IMAGE                                 # Push backend image to Docker registry
+  tags:
+    - my-vps
+  only:
+    - main
 
 deploy_app:
   stage: deploy
   image: alpine:latest
   before_script:
-    - apk add --no-cache openssh sshpass curl docker-compose
-    - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-    - chmod 600 ~/.ssh/id_rsa
-    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+    - apk add --no-cache openssh sshpass curl docker-compose     # Install SSH, curl and docker-compose on runner
+    - mkdir -p ~/.ssh                                             # Prepare SSH config directory
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa                     # Add private SSH key for EC2 access
+    - chmod 600 ~/.ssh/id_rsa                                      # Secure SSH key permissions
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config  # Disable SSH host key checking for automation
   script:
-    - export EC2_IP=$(cat ec2_ip.txt)
-    - ssh ubuntu@$EC2_IP "sudo apt-get update -y && sudo apt-get install -y docker.io curl && sudo systemctl enable --now docker && sudo usermod -aG docker ubuntu && sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose && sudo chmod +x /usr/local/bin/docker-compose"
-    - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/
-    - ssh ubuntu@$EC2_IP "cd /home/ubuntu && docker-compose down && docker-compose pull && docker-compose up -d --remove-orphans"
+    - export EC2_IP=$(cat ec2_ip.txt)                              # Read EC2 IP from artifact
+    - ssh ubuntu@$EC2_IP "sudo apt-get update -y && sudo apt-get install -y docker.io curl && sudo systemctl enable --now docker && sudo usermod -aG docker ubuntu && sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose && sudo chmod +x /usr/local/bin/docker-compose"  
+      # Connect via SSH, install Docker and Docker Compose on EC2, enable Docker service, add user to Docker group
+    - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/  # Copy docker-compose file to EC2
+    - ssh ubuntu@$EC2_IP "cd /home/ubuntu && docker-compose down && docker-compose pull && docker-compose up -d --remove-orphans"  
+      # Deploy backend containers by restarting services via docker-compose on EC2
   dependencies:
-    - terraform_apply
+    - terraform_apply                                             # Must run after infrastructure provision
   only:
     - main
   tags:
     - my-vps
 
-
+pages:
+  stage: publish_pages
+  dependencies:
+    - build_flutter_apk                                          # Depends on APK build artifacts
+  script:
+    - cp -r tasktodo_frontend/public .                            # Copy public folder to root for GitLab Pages hosting
+  artifacts:
+    paths:
+      - public                                                  # Publish public folder for GitLab Pages
+  only:
+    - main
+  tags:
+    - my-vps
