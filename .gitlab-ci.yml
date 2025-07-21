@@ -167,6 +167,7 @@ deploy_app:
     - my-vps
   needs:
     - deploy_staging
+    - terraform_apply
 
 pages:
   stage: publish_pages
