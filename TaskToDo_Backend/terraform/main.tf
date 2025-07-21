@@ -123,24 +123,26 @@ data "aws_ebs_volume" "docker_volume" {
     subnet_id                   = aws_subnet.main_subnet.id
     vpc_security_group_ids      = [aws_security_group.ssh_access.id]
     associate_public_ip_address = true
-user_data = <<-EOF
-  #!/bin/bash
-  set -eux
+#!/bin/bash
+set -eux
 
-  # Wait for the volume to show up
-  while [ ! -b /dev/nvme1n1 ]; do sleep 1; done
+# Wait until the EBS volume device is available
+while [ ! -b /dev/nvme1n1 ]; do sleep 1; done
 
-  # Format if it's empty
-  if ! blkid /dev/nvme1n1; then
-    mkfs.ext4 /dev/nvme1n1
-  fi
+# Create mount point if missing
+mkdir -p /mnt/mongo-data
 
-  mkdir -p /var/lib/docker
-  mount /dev/nvme1n1 /var/lib/docker
+# Check if already mounted, if not mount it
+if ! mountpoint -q /mnt/mongo-data; then
+  mount /dev/nvme1n1 /mnt/mongo-data
+fi
 
-  echo '/dev/nvme1n1 /var/lib/docker ext4 defaults,nofail 0 2' >> /etc/fstab
-  chown root:root /var/lib/docker
-EOF
+# Add to /etc/fstab if not already there
+grep -q '/dev/nvme1n1 /mnt/mongo-data' /etc/fstab || echo '/dev/nvme1n1 /mnt/mongo-data ext4 defaults,noatime,nofail 0 2' >> /etc/fstab
+
+# Set ownership for MongoDB (UID 999)
+chown -R 999:999 /mnt/mongo-data
+
 
 
     depends_on = [
