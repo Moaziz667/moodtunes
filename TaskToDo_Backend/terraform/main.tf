@@ -123,7 +123,7 @@ data "aws_ebs_volume" "docker_volume" {
     subnet_id                   = aws_subnet.main_subnet.id
     vpc_security_group_ids      = [aws_security_group.ssh_access.id]
     associate_public_ip_address = true
-#!/bin/bash
+user_data = #!/bin/bash
 set -eux
 
 # Wait until the EBS volume device is available
@@ -142,7 +142,6 @@ grep -q '/dev/nvme1n1 /mnt/mongo-data' /etc/fstab || echo '/dev/nvme1n1 /mnt/mon
 
 # Set ownership for MongoDB (UID 999)
 chown -R 999:999 /mnt/mongo-data
-
 
 
     depends_on = [
