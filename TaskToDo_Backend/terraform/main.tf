@@ -125,14 +125,23 @@ data "aws_ebs_volume" "docker_volume" {
     associate_public_ip_address = true
 user_data = <<-EOF
   #!/bin/bash
+  set -eux
+
+  # Wait for the volume to show up
+  while [ ! -b /dev/nvme1n1 ]; do sleep 1; done
+
+  # Format if it's empty
   if ! blkid /dev/nvme1n1; then
     mkfs.ext4 /dev/nvme1n1
   fi
-  systemctl stop docker
+
+  mkdir -p /var/lib/docker
   mount /dev/nvme1n1 /var/lib/docker
+
   echo '/dev/nvme1n1 /var/lib/docker ext4 defaults,nofail 0 2' >> /etc/fstab
-  systemctl start docker
+  chown root:root /var/lib/docker
 EOF
+
 
     depends_on = [
         aws_route_table_association.a
