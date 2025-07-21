@@ -112,30 +112,46 @@ build_backend:
 
 
 deploy_staging:
-  stage: deploy
+  stage: deploy  # This job runs in the "deploy" stage of the pipeline
+
   variables:
-    SSH_HOST: "185.44.67.203"
-    SSH_USER: "root"
-    SSH_PORT: "51821"
+    SSH_HOST: "185.44.67.203"  # VPS IP address
+    SSH_USER: "root"           # SSH user (be cautious using root in production)
+    SSH_PORT: "51821"          # Custom SSH port (non-default for security)
+
   before_script:
-    - apk add --no-cache openssh
-    - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-    - chmod 600 ~/.ssh/id_rsa
-    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+  - apk add --no-cache openssh           # Install OpenSSH client (for SSH/SCP)
+  - mkdir -p ~/.ssh                      # Create SSH config directory
+  - set +x                              # Disable command echo
+  - echo "$SSH_VPS" > ~/.ssh/id_rsa     # Save SSH private key from GitLab CI/CD variable
+  - chmod 600 ~/.ssh/id_rsa              # Secure permissions on the private key
+  - set -x                              # Re-enable command echo
+  - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config  # Disable strict host key checking
+
+
   script:
+    # Upload the staging Docker Compose file to the VPS using secure copy (SCP)
     - scp -P $SSH_PORT TaskToDo_Backend/docker-compose.staging.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
+
+    # SSH into the server and run Docker Compose:
+    # - Stop old containers
+    # - Pull latest image(s)
+    # - Rebuild and restart services
     - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
         docker compose -f /root/docker-compose.yml down &&
         docker compose -f /root/docker-compose.yml pull &&
         docker compose -f /root/docker-compose.yml up -d --build
       "
+
   only:
-    - main
+    - main  # Run this job only on the main branch
+
   tags:
-    - my-vps
+    - my-vps  # Use runners with this specific tag
+
   environment:
-    name: staging
+    name: staging  # Declare this job as a deployment to the 'staging' environment
+
   
 
 
@@ -167,7 +183,6 @@ deploy_app:
     - my-vps
   needs:
     - deploy_staging
-    - terraform_apply
 
 pages:
   stage: publish_pages
