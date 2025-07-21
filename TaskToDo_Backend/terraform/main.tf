@@ -32,6 +32,17 @@
         Name = "main-gw"
     }
     }
+data "aws_ebs_volume" "docker_volume" {
+  filter {
+    name   = "tag:Name"
+    values = ["DockerVolume"]
+  }
+
+  filter {
+    name   = "availability-zone"
+    values = [aws_instance.ci_instance.availability_zone]
+  }
+}
 
     # Route Table
     resource "aws_route_table" "main_rt" {
@@ -112,7 +123,16 @@
     subnet_id                   = aws_subnet.main_subnet.id
     vpc_security_group_ids      = [aws_security_group.ssh_access.id]
     associate_public_ip_address = true
-
+user_data = <<-EOF
+  #!/bin/bash
+  if ! blkid /dev/xvdf; then
+    mkfs.ext4 /dev/xvdf
+  fi
+  systemctl stop docker
+  mount /dev/xvdf /var/lib/docker
+  echo '/dev/xvdf /var/lib/docker ext4 defaults,nofail 0 2' >> /etc/fstab
+  systemctl start docker
+EOF
     depends_on = [
         aws_route_table_association.a
     ]
@@ -122,3 +142,9 @@
     }
     }
 
+resource "aws_volume_attachment" "docker_volume" {
+  device_name = "/dev/xvdf"
+  volume_id   = data.aws_ebs_volume.docker_volume.id
+  instance_id = aws_instance.ci_instance.id
+  force_detach = true
+}
