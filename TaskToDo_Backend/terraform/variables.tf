@@ -18,17 +18,20 @@ variable "atlas_public_key" {
   description = "MongoDB Atlas API Public Key"
   type        = string
   sensitive   = true
+  default     = ""  # Provide via CI/CD or TF Cloud variables
 }
 
 variable "atlas_private_key" {
   description = "MongoDB Atlas API Private Key"
   type        = string
   sensitive   = true
+  default     = ""  # Provide via CI/CD or TF Cloud variables
 }
 
 variable "atlas_org_id" {
   description = "MongoDB Atlas Organization ID"
   type        = string
+  default     = ""  # Provide via CI/CD or TF Cloud variables
 }
 
 variable "atlas_project_name" {
@@ -53,6 +56,7 @@ variable "atlas_db_password" {
   description = "MongoDB Atlas Database Password"
   type        = string
   sensitive   = true
+  default     = ""  # Provide via CI/CD or TF Cloud variables
 }
 
 # =============================================================================
