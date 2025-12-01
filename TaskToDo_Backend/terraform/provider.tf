@@ -3,7 +3,7 @@ terraform {
     organization = "Asm_aziz_stage"
 
     workspaces {
-      name = "deploy-infra-mobile"
+      name = "deploy-infra-monile"
     }
   }
 
