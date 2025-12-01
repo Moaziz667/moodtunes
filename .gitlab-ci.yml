@@ -15,7 +15,8 @@ stages:
 variables:
   DOCKER_HOST: tcp://docker:2375  # Docker daemon TCP address for Docker-in-Docker
   DOCKER_TLS_CERTDIR: ""           # Disable TLS cert directory for Docker daemon (required for DinD)
-  BACKEND_IMAGE: azizhk444/nodejserver  # Docker image tag for backend app
+  BACKEND_IMAGE: azizhk444/nodejserver  # Docker image base name
+  IMAGE_TAG: $CI_PIPELINE_IID      # Use pipeline ID as image tag for traceability
 
 terraform_apply:
   stage: infrastructure
@@ -26,15 +27,24 @@ terraform_apply:
     AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID      # AWS credentials from CI variables
     AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
     AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
-    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io  # Terraform Cloud API token (if using)
+    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io  # Terraform Cloud API token
+    # MongoDB Atlas credentials
+    TF_VAR_atlas_public_key: $ATLAS_PUBLIC_KEY
+    TF_VAR_atlas_private_key: $ATLAS_PRIVATE_KEY
+    TF_VAR_atlas_org_id: $ATLAS_ORG_ID
+    TF_VAR_atlas_db_password: $ATLAS_DB_PASSWORD
   script:
     - cd TaskToDo_Backend/terraform             # Move into Terraform config directory
     - terraform init                            # Initialize Terraform (download providers, modules)
     - terraform apply -auto-approve            # Apply Terraform config, auto-approve without prompt
-    - terraform output -raw instance_public_ip > ../../ec2_ip.txt  # Extract EC2 public IP and save it to file for later use
+    - terraform output -raw alb_dns_name > ../../alb_dns.txt    # Extract ALB DNS name
+    - terraform output -raw asg_name > ../../asg_name.txt       # Extract ASG name
+    - terraform output -raw mongodb_connection_string > ../../mongo_uri.txt  # Extract Atlas URI
   artifacts:
     paths:
-      - ec2_ip.txt                             # Save EC2 IP as artifact to share with downstream jobs
+      - alb_dns.txt                            # Save ALB DNS as artifact
+      - asg_name.txt                           # Save ASG name as artifact
+      - mongo_uri.txt                          # Save MongoDB Atlas URI as artifact
   only:
     - main                                    # Run this job only on main branch
   tags:
@@ -45,14 +55,14 @@ update_flutter_config:
   image: alpine:latest                        # Use lightweight Alpine Linux image for scripting
   script:
     - apk add --no-cache curl bash            # Install curl and bash in Alpine
-    - export EC2_IP=$(cat ec2_ip.txt)         # Read the EC2 IP from the artifact file
-    - sed -i "s|final url = .*|final url = 'http://$EC2_IP:3000/';|" tasktodo_frontend/lib/config.dart  
-      # Replace the backend URL in Flutter config with the new EC2 IP dynamically
+    - export ALB_DNS=$(cat alb_dns.txt)       # Read the ALB DNS from the artifact file
+    - sed -i "s|final url = .*|final url = 'http://$ALB_DNS/';|" tasktodo_frontend/lib/config.dart  
+      # Replace the backend URL in Flutter config with ALB DNS (port 80, no need to specify)
   artifacts:
     paths:
       - tasktodo_frontend/lib/config.dart     # Save updated config file for next job
   dependencies:
-    - terraform_apply                         # Depends on terraform_apply to get ec2_ip.txt
+    - terraform_apply                         # Depends on terraform_apply to get alb_dns.txt
   only:
     - main
   tags:
@@ -102,8 +112,10 @@ build_backend:
   stage: build_node
   script:
     - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"  # Log in to Docker registry
-    - docker build -t $BACKEND_IMAGE ./TaskToDo_Backend          # Build backend Docker image
-    - docker push $BACKEND_IMAGE                                 # Push backend image to Docker registry
+    - docker build -t $BACKEND_IMAGE:$IMAGE_TAG ./TaskToDo_Backend  # Build with version tag
+    - docker build -t $BACKEND_IMAGE:latest ./TaskToDo_Backend      # Also tag as latest
+    - docker push $BACKEND_IMAGE:$IMAGE_TAG                         # Push versioned image
+    - docker push $BACKEND_IMAGE:latest                             # Push latest tag
   tags:
     - my-vps
   only:
@@ -127,21 +139,23 @@ deploy_staging:
   - chmod 600 ~/.ssh/id_rsa              # Secure permissions on the private key
   - set -x                              # Re-enable command echo
   - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config  # Disable strict host key checking
-
+  - export MONGODB_URI=$(cat mongo_uri.txt)  # Read Atlas URI from artifact
 
   script:
     # Upload the staging Docker Compose file to the VPS using secure copy (SCP)
     - scp -P $SSH_PORT TaskToDo_Backend/docker-compose.staging.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
 
-    # SSH into the server and run Docker Compose:
-    # - Stop old containers
-    # - Pull latest image(s)
-    # - Rebuild and restart services
+    # SSH into the server and run Docker Compose with Atlas URI
     - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
+        export IMAGE_TAG=$IMAGE_TAG &&
+        export MONGODB_URI='$MONGODB_URI' &&
         docker compose -f /root/docker-compose.yml down &&
         docker compose -f /root/docker-compose.yml pull &&
-        docker compose -f /root/docker-compose.yml up -d --build
+        docker compose -f /root/docker-compose.yml up -d
       "
+
+  dependencies:
+    - terraform_apply  # Need mongo_uri.txt artifact
 
   only:
     - main  # Run this job only on the main branch
@@ -158,42 +172,133 @@ deploy_staging:
 
 deploy_app:
   stage: deploy
-  image: alpine:latest
+  image: 
+    name: amazon/aws-cli:latest
+    entrypoint: [""]                          # Override entrypoint for AWS CLI
+  variables:
+    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+    AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
   before_script:
-    - apk add --no-cache openssh sshpass curl docker-compose     # Install SSH, curl and docker-compose on runner
-    - mkdir -p ~/.ssh                                             # Prepare SSH config directory
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa                     # Add private SSH key for EC2 access
-    - chmod 600 ~/.ssh/id_rsa                                      # Secure SSH key permissions
-    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config  # Disable SSH host key checking for automation
+    - export ASG_NAME=$(cat asg_name.txt)     # Read ASG name from artifact
+    - export MONGODB_URI=$(cat mongo_uri.txt) # Read Atlas URI from artifact
   script:
-    - export EC2_IP=$(cat ec2_ip.txt)                              # Read EC2 IP from artifact
-    - ssh ubuntu@$EC2_IP "sudo apt-get update -y && sudo apt-get install -y docker.io curl && sudo systemctl enable --now docker && sudo usermod -aG docker ubuntu && sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose && sudo chmod +x /usr/local/bin/docker-compose"  
-      # Connect via SSH, install Docker and Docker Compose on EC2, enable Docker service, add user to Docker group
-    - scp TaskToDo_Backend/docker-compose.yml ubuntu@$EC2_IP:/home/ubuntu/  # Copy docker-compose file to EC2
-    - ssh ubuntu@$EC2_IP "cd /home/ubuntu && docker-compose down && docker-compose pull && docker-compose up -d --remove-orphans"  
-      # Deploy backend containers by restarting services via docker-compose on EC2
+    # Trigger ASG instance refresh to deploy new version
+    # This will rolling-update instances with new launch template
+    - |
+      echo "Starting ASG instance refresh for $ASG_NAME..."
+      aws autoscaling start-instance-refresh \
+        --auto-scaling-group-name "$ASG_NAME" \
+        --preferences '{"MinHealthyPercentage": 50, "InstanceWarmup": 300}' \
+        --strategy Rolling
+    # Wait for refresh to complete
+    - |
+      echo "Waiting for instance refresh to complete..."
+      while true; do
+        STATUS=$(aws autoscaling describe-instance-refreshes \
+          --auto-scaling-group-name "$ASG_NAME" \
+          --query 'InstanceRefreshes[0].Status' \
+          --output text)
+        echo "Current status: $STATUS"
+        if [ "$STATUS" = "Successful" ]; then
+          echo "✅ Instance refresh completed successfully!"
+          break
+        elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+          echo "❌ Instance refresh failed!"
+          exit 1
+        fi
+        sleep 30
+      done
   dependencies:
-    - terraform_apply                                             # Must run after infrastructure provision
+    - terraform_apply                         # Need asg_name.txt and mongo_uri.txt
+    - build_backend                           # Need new Docker image pushed first
   only:
     - main
   environment:
     name: production
-  when: manual                                            # Manual deployment trigger
+    url: http://$ALB_DNS
+  when: manual                                # Manual deployment trigger
   tags:
     - my-vps
   needs:
     - deploy_staging
-    - terraform_apply 
+    - terraform_apply
+    - build_backend 
 
 pages:
   stage: publish_pages
+  image: alpine:latest
   dependencies:
-    - build_flutter_apk                                          # Depends on APK build artifacts
+    - build_flutter_apk                           # Depends on APK build artifacts
+  before_script:
+    - apk add --no-cache curl jq                  # Install curl and jq for API calls
   script:
-    - cp -r tasktodo_frontend/public .                            # Copy public folder to root for GitLab Pages hosting
+    # Create public directory structure
+    - mkdir -p public/apks
+    
+    # Try to fetch existing APKs from previous GitLab Pages deployment
+    - |
+      echo "Fetching existing APKs from GitLab Pages..."
+      PAGES_URL="https://${CI_PROJECT_NAMESPACE}.gitlab.io/${CI_PROJECT_NAME}"
+      
+      # Download existing index.html to extract APK links
+      if curl -sSf "${PAGES_URL}/index.html" -o old_index.html 2>/dev/null; then
+        echo "Found existing Pages deployment, downloading previous APKs..."
+        # Extract APK filenames from old index and download them
+        grep -oP 'apks/app-v[0-9]+\.apk' old_index.html | sort -u | while read apk_path; do
+          apk_name=$(basename "$apk_path")
+          echo "Downloading ${apk_name}..."
+          curl -sSf "${PAGES_URL}/${apk_path}" -o "public/apks/${apk_name}" || echo "Failed to download ${apk_name}"
+        done
+      else
+        echo "No existing Pages deployment found, starting fresh."
+      fi
+    
+    # Copy new APK from build artifacts
+    - cp -r tasktodo_frontend/public/apks/* public/apks/ 2>/dev/null || true
+    
+    # Generate index.html with ALL APKs (sorted by version, newest first)
+    - |
+      echo "<!DOCTYPE html>
+      <html>
+      <head>
+        <title>TaskToDo APK Downloads</title>
+        <style>
+          body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+          h1 { color: #333; }
+          ul { list-style: none; padding: 0; }
+          li { padding: 10px; margin: 5px 0; background: #f5f5f5; border-radius: 5px; }
+          a { color: #0066cc; text-decoration: none; }
+          a:hover { text-decoration: underline; }
+          .latest { background: #d4edda; border-left: 4px solid #28a745; }
+          .version { color: #666; font-size: 0.9em; }
+        </style>
+      </head>
+      <body>
+        <h1>📱 TaskToDo APK Downloads</h1>
+        <p>Download the Android app below. Latest version is highlighted.</p>
+        <ul>" > public/index.html
+      
+      # List APKs sorted by version number (newest first)
+      FIRST=true
+      for apk in $(ls -1 public/apks/app-*.apk 2>/dev/null | sort -t'v' -k2 -rn); do
+        apk_name=$(basename "$apk")
+        if [ "$FIRST" = true ]; then
+          echo "<li class='latest'>🆕 <a href='apks/${apk_name}'>${apk_name}</a> <span class='version'>(Latest)</span></li>" >> public/index.html
+          FIRST=false
+        else
+          echo "<li><a href='apks/${apk_name}'>${apk_name}</a></li>" >> public/index.html
+        fi
+      done
+      
+      echo "</ul>
+        <hr>
+        <p><small>Built with GitLab CI/CD | Pipeline #${CI_PIPELINE_IID}</small></p>
+      </body>
+      </html>" >> public/index.html
   artifacts:
     paths:
-      - public                                                  # Publish public folder for GitLab Pages
+      - public                                    # Publish public folder for GitLab Pages
   only:
     - main
   tags:

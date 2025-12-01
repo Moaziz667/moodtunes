@@ -1,22 +1,17 @@
 version: "3.8"
 
 services:
-  mongo:
-    image: mongo:6.0
-    restart: unless-stopped
-    container_name: tasktodo_mongo_staging
-    ports:
-      - "27017:27017"
-    volumes:
-      - /mnt/mongo-data:/data/db   # Use EBS mount for MongoDB data persistence
-
   backend:
-    image: azizhk444/nodejserver
+    image: azizhk444/nodejserver:${IMAGE_TAG:-latest}
     container_name: tasktodo_backend_staging
     restart: unless-stopped
     ports:
       - "3000:3000"
-    depends_on:
-      - mongo
     environment:
-      MONGODB_URI: mongodb://mongo:27017/TaskToDo
+      MONGODB_URI: ${MONGODB_URI}  # Atlas connection string from CI/CD
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
