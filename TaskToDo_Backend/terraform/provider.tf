@@ -3,7 +3,7 @@ terraform {
     organization = "Asm_aziz_stage"
 
     workspaces {
-      name = "deploy-infra-mobile"
+      name = "deploy-infra-monile"
     }
   }
 
@@ -23,7 +23,7 @@ provider "aws" {
   region = var.aws_region
 }
 
-# MongoDB Atlas Provider
+# MongoDB Atlas Providerrr
 # Set MONGODB_ATLAS_PUBLIC_KEY and MONGODB_ATLAS_PRIVATE_KEY env vars in CI/CD
 provider "mongodbatlas" {
   public_key  = var.atlas_public_key
