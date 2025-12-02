@@ -88,8 +88,6 @@ build_flutter_apk:
 flutter_test:
   stage: test
   image: ghcr.io/cirruslabs/flutter:3.32.6  # Same Flutter SDK image for tests
-  tags:
-    - my-vps
   script:
     - cd tasktodo_frontend                    # Move to Flutter frontend directory
     - flutter pub get                         # Get dependencies for tests
