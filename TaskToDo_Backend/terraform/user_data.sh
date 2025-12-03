@@ -32,7 +32,7 @@ echo "=== Creating docker-compose.yml ==="
 
 # Create docker-compose file with injected variables
 cat > docker-compose.yml <<COMPOSE
-version: "3.8"
+version: "3.3"
 
 services:
   backend:
