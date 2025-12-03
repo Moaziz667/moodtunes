@@ -170,35 +170,45 @@ deploy_app:
     AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
     AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
   before_script:
+    - yum install -y jq || true               # Install jq for JSON parsing
     - export ASG_NAME=$(cat asg_name.txt)     # Read ASG name from artifact
     - export MONGODB_URI=$(cat mongo_uri.txt) # Read Atlas URI from artifact
   script:
     # Trigger ASG instance refresh to deploy new version
-    # This will rolling-update instances with new launch template
     - |
       echo "Starting ASG instance refresh for $ASG_NAME..."
       aws autoscaling start-instance-refresh \
         --auto-scaling-group-name "$ASG_NAME" \
-        --preferences '{"MinHealthyPercentage": 50, "InstanceWarmup": 300}' \
+        --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 120}' \
         --strategy Rolling
-    # Wait for refresh to complete
+    # Wait for refresh to complete with TIMEOUT (max 10 minutes)
     - |
-      echo "Waiting for instance refresh to complete..."
-      while true; do
+      echo "Waiting for instance refresh to complete (timeout: 10 min)..."
+      TIMEOUT=600
+      ELAPSED=0
+      while [ $ELAPSED -lt $TIMEOUT ]; do
         STATUS=$(aws autoscaling describe-instance-refreshes \
           --auto-scaling-group-name "$ASG_NAME" \
           --query 'InstanceRefreshes[0].Status' \
           --output text)
-        echo "Current status: $STATUS"
+        echo "[$ELAPSED s] Current status: $STATUS"
         if [ "$STATUS" = "Successful" ]; then
           echo "✅ Instance refresh completed successfully!"
-          break
+          exit 0
         elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
-          echo "❌ Instance refresh failed!"
+          echo "❌ Instance refresh failed! Checking instance health..."
+          aws autoscaling describe-instance-refreshes \
+            --auto-scaling-group-name "$ASG_NAME" \
+            --query 'InstanceRefreshes[0].StatusReason' \
+            --output text
           exit 1
         fi
-        sleep 30
+        sleep 20
+        ELAPSED=$((ELAPSED + 20))
       done
+      echo "⏰ Timeout reached! Cancelling instance refresh..."
+      aws autoscaling cancel-instance-refresh --auto-scaling-group-name "$ASG_NAME" || true
+      exit 1
   dependencies:
     - terraform_apply                         # Need asg_name.txt and mongo_uri.txt
     - build_backend                           # Need new Docker image pushed first
