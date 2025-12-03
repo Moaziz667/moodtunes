@@ -1,4 +1,5 @@
-final url = "http://51.20.43.4:3000/";
+// Backend base URL (ALB DNS). Use HTTP unless HTTPS is configured.
+final url = "http://tasktodo-alb-1054970230.eu-north-1.elb.amazonaws.com/";
 
 // Auth endpoints
 final registration = url + "registration";

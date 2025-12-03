@@ -236,22 +236,30 @@ pages:
     # Create public directory structure
     - mkdir -p public/apks
     
-    # Try to fetch existing APKs from previous GitLab Pages deployment
+    # Robustly fetch existing APKs from prior GitLab Pages deployment (follows redirects, clearer logs)
     - |
       echo "Fetching existing APKs from GitLab Pages..."
       PAGES_URL="https://${CI_PROJECT_NAMESPACE}.gitlab.io/${CI_PROJECT_NAME}"
-      
-      # Download existing index.html to extract APK links
-      if curl -sSf "${PAGES_URL}/index.html" -o old_index.html 2>/dev/null; then
-        echo "Found existing Pages deployment, downloading previous APKs..."
-        # Extract APK filenames from old index and download them
-        grep -oP 'apks/app-v[0-9]+\.apk' old_index.html | sort -u | while read apk_path; do
-          apk_name=$(basename "$apk_path")
-          echo "Downloading ${apk_name}..."
-          curl -sSf "${PAGES_URL}/${apk_path}" -o "public/apks/${apk_name}" || echo "Failed to download ${apk_name}"
-        done
+      STATUS=$(curl -Ls -o old_index.html -w "%{http_code}" "${PAGES_URL}/index.html" || echo 000)
+      if [ "$STATUS" = "200" ] || [ "$STATUS" = "302" ] || [ "$STATUS" = "301" ]; then
+        echo "Existing Pages found (HTTP $STATUS). Extracting previous APK links..."
+        # Extract APK filenames from old index (supports app-v<id>.apk or app-<any>.apk)
+        PREV_APKS=$(grep -Eo 'apks/app-[^"\s]+' old_index.html | sed 's/\"//g' | sort -u)
+        if [ -n "$PREV_APKS" ]; then
+          echo "$PREV_APKS" | while read apk_path; do
+            apk_name=$(basename "$apk_path")
+            if [ -f "public/apks/${apk_name}" ]; then
+              echo "Skipping already present ${apk_name}"
+            else
+              echo "Downloading ${apk_name} from ${PAGES_URL}/${apk_path}..."
+              curl -LsSf "${PAGES_URL}/${apk_path}" -o "public/apks/${apk_name}" || echo "Failed to download ${apk_name}"
+            fi
+          done
+        else
+          echo "No prior APK links found in existing index.html."
+        fi
       else
-        echo "No existing Pages deployment found, starting fresh."
+        echo "Pages not reachable (HTTP ${STATUS}). Proceeding with fresh deployment."
       fi
     
     # Copy new APK from build artifacts
@@ -279,9 +287,10 @@ pages:
         <p>Download the Android app below. Latest version is highlighted.</p>
         <ul>" > public/index.html
       
-      # List APKs sorted by version number (newest first)
+      # List APKs sorted by version number (newest first). If no vNNN pattern, fallback to name sort.
       FIRST=true
-      for apk in $(ls -1 public/apks/app-*.apk 2>/dev/null | sort -t'v' -k2 -rn); do
+      APK_LIST=$(ls -1 public/apks/app-*.apk 2>/dev/null | sort -t'v' -k2 -rn)
+      for apk in $APK_LIST; do
         apk_name=$(basename "$apk")
         if [ "$FIRST" = true ]; then
           echo "<li class='latest'>🆕 <a href='apks/${apk_name}'>${apk_name}</a> <span class='version'>(Latest)</span></li>" >> public/index.html
