@@ -46,7 +46,7 @@ update_flutter_config:
   stage: configure_flutter
   image: alpine:latest                        # Use lightweight Alpine Linux image for scripting
   script:
-    - apk add --no-cache curl bash            # Install curl and bash in Alpine
+    - apk add --no-cache curl bash            # Installl curl and bash in Alpine
     - export ALB_DNS=$(cat alb_dns.txt)       # Read the ALB DNS from the artifact file
     - sed -i "s|final url = .*|final url = 'http://$ALB_DNS/';|" tasktodo_frontend/lib/config.dart  
       # Replace the backend URL in Flutter config with ALB DNS (port 80, no need to specify)
