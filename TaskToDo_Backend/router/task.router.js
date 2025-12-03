@@ -1,9 +1,12 @@
 const router = require("express").Router();
-const ToDoController = require('../controller/task.controller')
+const MoodController = require('../controller/task.controller');
 
-router.post("/createToDo", ToDoController.createToDo);
-// Change this to POST if you want to keep your Flutter code as is
-router.post('/getUserTodoList', ToDoController.getToDoList)  
-router.post("/deleteTodo", ToDoController.deleteToDo)
+// Mood Entry Routes
+router.post("/createMoodEntry", MoodController.createMoodEntry);
+router.post('/getMoodEntries', MoodController.getMoodEntries);
+router.post('/getMoodEntriesByRange', MoodController.getMoodEntriesByRange);
+router.post('/getMoodStats', MoodController.getMoodStats);
+router.post("/deleteMoodEntry", MoodController.deleteMoodEntry);
+router.post('/getEntriesByMood', MoodController.getEntriesByMood);
 
 module.exports = router;

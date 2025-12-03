@@ -3,20 +3,39 @@ const UserModel = require("./user.model");
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
-const TaskSchema = new Schema({
-    userId:{
+// Mood Entry Schema - Track daily moods with songs
+const MoodEntrySchema = new Schema({
+    userId: {
         type: Schema.Types.ObjectId,
-        ref: UserModel.modelName
-    },
-    title: {
-        type: String,
+        ref: UserModel.modelName,
         required: true
     },
-    description: {
+    mood: {
         type: String,
+        enum: ['happy', 'sad', 'energetic', 'calm', 'angry', 'anxious', 'romantic', 'nostalgic'],
         required: true
     },
-},{timestamps:true});
+    moodScore: {
+        type: Number,
+        min: 1,
+        max: 10,
+        required: true
+    },
+    song: {
+        title: { type: String, required: true },
+        artist: { type: String, required: true },
+        albumArt: { type: String, default: '' },
+        spotifyUrl: { type: String, default: '' }
+    },
+    note: {
+        type: String,
+        default: ''
+    },
+    date: {
+        type: Date,
+        default: Date.now
+    }
+}, { timestamps: true });
 
-const taskModel = db.model('Task',TaskSchema);
-module.exports = taskModel;
+const MoodEntryModel = db.model('MoodEntry', MoodEntrySchema);
+module.exports = MoodEntryModel;

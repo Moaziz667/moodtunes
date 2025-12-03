@@ -1,34 +1,73 @@
-const ToDoService = require('../services/task.services');
+const MoodService = require('../services/task.services');
 
-exports.createToDo =  async (req,res,next)=>{
+// Create a new mood entry
+exports.createMoodEntry = async (req, res, next) => {
     try {
-        const { userId,title, desc } = req.body;
-        let todoData = await ToDoService.createToDo(userId,title, desc);
-        res.json({status: true,success:todoData});
+        const { userId, mood, moodScore, song, note } = req.body;
+        let moodData = await MoodService.createMoodEntry(userId, mood, moodScore, song, note);
+        res.json({ status: true, success: moodData });
     } catch (error) {
         console.log(error, 'err---->');
         next(error);
     }
-}
+};
 
-exports.getToDoList =  async (req,res,next)=>{
+// Get all mood entries for a user
+exports.getMoodEntries = async (req, res, next) => {
     try {
         const { userId } = req.body;
-        let todoData = await ToDoService.getUserToDoList(userId);
-        res.json({status: true,success:todoData});
+        let moodData = await MoodService.getUserMoodEntries(userId);
+        res.json({ status: true, success: moodData });
     } catch (error) {
         console.log(error, 'err---->');
         next(error);
     }
-}
+};
 
-exports.deleteToDo =  async (req,res,next)=>{
+// Get mood entries by date range
+exports.getMoodEntriesByRange = async (req, res, next) => {
+    try {
+        const { userId, startDate, endDate } = req.body;
+        let moodData = await MoodService.getMoodEntriesByDateRange(userId, startDate, endDate);
+        res.json({ status: true, success: moodData });
+    } catch (error) {
+        console.log(error, 'err---->');
+        next(error);
+    }
+};
+
+// Get mood statistics
+exports.getMoodStats = async (req, res, next) => {
+    try {
+        const { userId } = req.body;
+        let statsData = await MoodService.getMoodStats(userId);
+        res.json({ status: true, success: statsData });
+    } catch (error) {
+        console.log(error, 'err---->');
+        next(error);
+    }
+};
+
+// Delete a mood entry
+exports.deleteMoodEntry = async (req, res, next) => {
     try {
         const { id } = req.body;
-        let deletedData = await ToDoService.deleteToDo(id);
-        res.json({status: true,success:deletedData});
+        let deletedData = await MoodService.deleteMoodEntry(id);
+        res.json({ status: true, success: deletedData });
     } catch (error) {
         console.log(error, 'err---->');
         next(error);
     }
-}
+};
+
+// Get entries by mood type
+exports.getEntriesByMood = async (req, res, next) => {
+    try {
+        const { userId, mood } = req.body;
+        let moodData = await MoodService.getEntriesByMood(userId, mood);
+        res.json({ status: true, success: moodData });
+    } catch (error) {
+        console.log(error, 'err---->');
+        next(error);
+    }
+};
