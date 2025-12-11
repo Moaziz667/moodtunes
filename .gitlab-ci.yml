@@ -39,8 +39,6 @@ terraform_apply:
       - mongo_uri.txt                          # Save MongoDB Atlas URI as artifact
   only:
     - main                                    # Run this job only on main branch
-  tags:
-    - my-vps                                  # Run job on runners tagged with 'my-vps'
 
 update_flutter_config:
   stage: configure_flutter
@@ -57,8 +55,6 @@ update_flutter_config:
     - terraform_apply                         # Depends on terraform_apply to get alb_dns.txt
   only:
     - main
-  tags:
-    - my-vps
 
 build_flutter_apk:
   stage: build_flutter_android
@@ -106,8 +102,6 @@ build_backend:
     - docker build -t $BACKEND_IMAGE:latest ./backend      # Also tag as latest
     - docker push $BACKEND_IMAGE:$IMAGE_TAG                         # Push versioned image
     - docker push $BACKEND_IMAGE:latest                             # Push latest tag
-  tags:
-    - my-vps
   only:
     - main
 
@@ -122,11 +116,12 @@ deploy_staging:
     SSH_PORT: "51821"          # Custom SSH port (non-default for security)
 
   before_script:
-  - apk add --no-cache openssh           # Install OpenSSH client (for SSH/SCP)
+  - apk add --no-cache openssh docker-cli    # Install OpenSSH and Docker CLI
   - mkdir -p ~/.ssh                      # Create SSH config directory
   - set +x                              # Disable command echo
   - echo "$SSH_VPS" > ~/.ssh/id_rsa     # Save SSH private key from GitLab CI/CD variable
   - chmod 600 ~/.ssh/id_rsa              # Secure permissions on the private key
+  - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"  # Login to Docker registry
   - set -x                              # Re-enable command echo
   - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config  # Disable strict host key checking
   - export MONGODB_URI=$(cat mongo_uri.txt)  # Read Atlas URI from artifact
@@ -149,9 +144,6 @@ deploy_staging:
 
   only:
     - main  # Run this job only on the main branch
-
-  tags:
-    - my-vps  # Use runners with this specific tag
 
   environment:
     name: staging  # Declare this job as a deployment to the 'staging' environment
@@ -218,8 +210,6 @@ deploy_app:
     name: production
     url: http://$ALB_DNS
   when: manual                                # Manual deployment trigger
-  tags:
-    - my-vps
   needs:
     - deploy_staging
     - terraform_apply
@@ -310,5 +300,3 @@ pages:
       - public                                    # Publish public folder for GitLab Pages
   only:
     - main
-  tags:
-    - my-vps
