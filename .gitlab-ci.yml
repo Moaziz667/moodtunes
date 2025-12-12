@@ -56,37 +56,37 @@ variables:
 #   only:
 #     - main
 
-build_flutter_apk:
-  stage: build_flutter_android
-  image: ghcr.io/cirruslabs/flutter:3.32.6  # Flutter SDK image with necessary tools pre-installed
-  # dependencies:
-  #   - update_flutter_config                   # Use updated Flutter config from previous job
-  cache:
-    key: flutter-build-$CI_COMMIT_REF_SLUG
-    paths:
-      - frontend/.dart_tool/
-      - frontend/.pub-cache/
-      - frontend/build/
-    policy: pull-push
-  script:
-    - cd frontend                    # Navigate to Flutter frontend directory
-    - flutter pub get                         # Fetch Flutter dependencies
-    - flutter build apk --release             # Build release APK for Android
-    - APK_VERSION="v${CI_PIPELINE_IID}"       # Set APK version based on pipeline ID (unique build number)
-    - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk  # Rename APK with version
-    - mkdir -p public/apks                     # Create directory to hold APKs for download page
-    - mv app-$APK_VERSION.apk public/apks/    # Move APK to public directory for GitLab Pages
-    - |
-      echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
-      for apk in public/apks/app-*.apk; do
-        echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
-      done
-      echo "</ul></body></html>" >> public/index.html  # Generate simple HTML page listing APK downloads
-  artifacts:
-    paths:
-      - frontend/public               # Save public directory (APK + index.html) for next stage
-  only:
-    - main
+# build_flutter_apk:
+#   stage: build_flutter_android
+#   image: ghcr.io/cirruslabs/flutter:3.32.6  # Flutter SDK image with necessary tools pre-installed
+#   # dependencies:
+#   #   - update_flutter_config                   # Use updated Flutter config from previous job
+#   cache:
+#     key: flutter-build-$CI_COMMIT_REF_SLUG
+#     paths:
+#       - frontend/.dart_tool/
+#       - frontend/.pub-cache/
+#       - frontend/build/
+#     policy: pull-push
+#   script:
+#     - cd frontend                    # Navigate to Flutter frontend directory
+#     - flutter pub get                         # Fetch Flutter dependencies
+#     - flutter build apk --release             # Build release APK for Android
+#     - APK_VERSION="v${CI_PIPELINE_IID}"       # Set APK version based on pipeline ID (unique build number)
+#     - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk  # Rename APK with version
+#     - mkdir -p public/apks                     # Create directory to hold APKs for download page
+#     - mv app-$APK_VERSION.apk public/apks/    # Move APK to public directory for GitLab Pages
+#     - |
+#       echo "<!DOCTYPE html><html><head><title>APK Downloads</title></head><body><h1>APK Versions</h1><ul>" > public/index.html
+#       for apk in public/apks/app-*.apk; do
+#         echo "<li><a href='apks/$(basename $apk)'>$(basename $apk)</a></li>" >> public/index.html
+#       done
+#       echo "</ul></body></html>" >> public/index.html  # Generate simple HTML page listing APK downloads
+#   artifacts:
+#     paths:
+#       - frontend/public               # Save public directory (APK + index.html) for next stage
+#   only:
+#     - main
 
 # flutter_test:
 #   stage: test
@@ -231,58 +231,63 @@ build_flutter_apk:
 pages:
   stage: publish_pages
   image: alpine:latest
-  dependencies:
-    - build_flutter_apk                           # Depends on APK build artifacts
+  # dependencies:
+  #   - build_flutter_apk                           # Depends on APK build artifacts
   before_script:
     - apk add --no-cache curl unzip               # Install minimal tools
   script:
     # Create public directory structure
     - mkdir -p public/apks /tmp/old_apks
     
-    # Fetch previous pages artifacts from published URL
+    # Fetch ALL previous APK versions from published GitLab Pages URL
     - |
-      echo "🔍 Fetching previous APK versions from GitLab Pages..."
+      echo "🔍 Fetching ALL previous APK versions from GitLab Pages..."
       PAGES_URL="https://${CI_PROJECT_NAMESPACE}.gitlab.io/${CI_PROJECT_NAME}"
       
       # Try to fetch existing index.html
       if curl -Ls "${PAGES_URL}/index.html" -o old_index.html 2>/dev/null; then
-        echo "✅ Found published pages, extracting APK links..."
+        echo "✅ Found published pages, extracting ALL APK links..."
         
-        # Extract all APK links from HTML (matches: apks/app-vXXX.apk)
-        grep -Eo 'apks/app-v[0-9]+\.apk' old_index.html > apk_list.txt 2>/dev/null || true
+        # Extract ALL APK links from HTML (matches: apks/app-*.apk)
+        grep -Eo 'apks/app-[^"]+\.apk' old_index.html | sort -u > apk_list.txt 2>/dev/null || true
         
         if [ -s apk_list.txt ]; then
+          echo "📦 Found $(wc -l < apk_list.txt) APK file(s) to download"
+          
           # Download each old APK
-          while read apk_path; do
+          while IFS= read -r apk_path; do
             apk_name=$(basename "$apk_path")
             echo "⬇️  Downloading ${apk_name}..."
-            curl -LsSf "${PAGES_URL}/${apk_path}" -o "/tmp/old_apks/${apk_name}" 2>/dev/null || echo "Failed: ${apk_name}"
+            
+            if curl -LsSf "${PAGES_URL}/${apk_path}" -o "/tmp/old_apks/${apk_name}" 2>/dev/null; then
+              echo "   ✅ Success: ${apk_name}"
+            else
+              echo "   ❌ Failed: ${apk_name}"
+            fi
           done < apk_list.txt
           
           OLD_COUNT=$(ls -1 /tmp/old_apks/*.apk 2>/dev/null | wc -l || echo 0)
-          echo "📋 Preserved ${OLD_COUNT} old version(s)"
+          echo "✅ Successfully preserved ${OLD_COUNT} old version(s)"
+          ls -lh /tmp/old_apks/ 2>/dev/null || true
         else
-          echo "ℹ️  No previous APKs found"
+          echo "ℹ️  No previous APKs found in index.html"
         fi
       else
         echo "ℹ️  No published pages yet. This is the first deployment."
       fi
     
-    # Copy new APK from build artifacts
-    - cp -r frontend/public/apks/* public/apks/ 2>/dev/null || true
-    
-    # Merge old APKs (don't overwrite new version)
+    # Copy old APKs to public directory first
     - |
       if [ -d "/tmp/old_apks" ]; then
-        for old_apk in /tmp/old_apks/*.apk; do
-          [ -f "$old_apk" ] || continue
-          apk_name=$(basename "$old_apk")
-          if [ ! -f "public/apks/${apk_name}" ]; then
-            cp "$old_apk" "public/apks/${apk_name}"
-            echo "✅ Restored: ${apk_name}"
-          fi
-        done
+        echo "📋 Copying all old APKs to public directory..."
+        cp -v /tmp/old_apks/*.apk public/apks/ 2>/dev/null || true
+        echo "✅ Old APKs copied"
       fi
+    
+    # List all APKs we have now
+    - |
+      echo "📊 Current APKs in public/apks:"
+      ls -lh public/apks/ 2>/dev/null || echo "No APKs found"
     
     # Count total versions
     - export TOTAL_VERSIONS=$(ls -1 public/apks/app-*.apk 2>/dev/null | wc -l)
