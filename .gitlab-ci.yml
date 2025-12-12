@@ -78,7 +78,7 @@ build_flutter_apk:
     - mv build/app/outputs/flutter-apk/app-release.apk ../app-$APK_VERSION.apk  # Rename APK with version
     - cd ..
     
-    # Upload APK to GitLab Package Registry (PERMANENT STORAGE)
+    # Upload APK to GitLab Package Registryy (PERMANENT STORAGE)
     - |
       echo "📦 Uploading APK to GitLab Package Registry..."
       PACKAGE_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/apk-builds/${APK_VERSION}/app-${APK_VERSION}.apk"
