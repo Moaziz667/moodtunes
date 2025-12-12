@@ -234,50 +234,99 @@ pages:
   dependencies:
     - build_flutter_apk                           # Depends on APK build artifacts
   before_script:
-    - apk add --no-cache curl jq coreutils        # Install tools for API calls and date handling
+    - apk add --no-cache curl jq coreutils unzip  # Install tools for API calls and extraction
   script:
     # Create public directory structure
     - mkdir -p public/apks
     
-    # Fetch previous pages artifacts from GitLab API to preserve old versions
+    # Fetch previous pages artifacts to preserve old versions (with fallback methods)
     - |
       echo "🔍 Fetching previous Pages artifacts to preserve version history..."
       
-      # GitLab API endpoint for job artifacts
+      # Method 1: Try GitLab API with job token
       API_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs"
+      API_RESPONSE=$(curl --silent --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        "${API_URL}?scope[]=success&per_page=100" 2>/dev/null || echo "")
       
-      # Find the most recent successful pages job (excluding current pipeline)
-      PREV_JOB=$(curl --silent --header "PRIVATE-TOKEN: ${CI_JOB_TOKEN}" \
-        "${API_URL}?scope[]=success&per_page=100" | \
-        jq -r ".[] | select(.name == \"pages\" and .pipeline.id != ${CI_PIPELINE_ID}) | .id" | \
-        head -n 1)
-      
-      if [ -n "$PREV_JOB" ] && [ "$PREV_JOB" != "null" ]; then
-        echo "✅ Found previous pages job: #${PREV_JOB}"
-        echo "📦 Downloading previous artifacts..."
+      # Check if we got valid JSON
+      if echo "$API_RESPONSE" | jq empty 2>/dev/null; then
+        echo "✅ API response valid, searching for previous pages job..."
+        PREV_JOB=$(echo "$API_RESPONSE" | \
+          jq -r ".[] | select(.name == \"pages\" and .pipeline.id != ${CI_PIPELINE_ID}) | .id" | \
+          head -n 1)
         
-        # Download and extract previous public folder
-        curl --silent --location --header "PRIVATE-TOKEN: ${CI_JOB_TOKEN}" \
-          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/${PREV_JOB}/artifacts" \
-          -o previous_artifacts.zip
-        
-        if [ -f previous_artifacts.zip ]; then
-          unzip -q -o previous_artifacts.zip -d ./
+        if [ -n "$PREV_JOB" ] && [ "$PREV_JOB" != "null" ]; then
+          echo "✅ Found previous pages job: #${PREV_JOB}"
+          echo "📦 Downloading previous artifacts..."
           
-          # Copy all old APKs (but don't overwrite new ones)
-          if [ -d "public/apks" ]; then
-            cp -n public/apks/*.apk public/apks/ 2>/dev/null || true
-            echo "📋 Preserved old APK versions"
+          curl --silent --location --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+            "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/${PREV_JOB}/artifacts" \
+            -o previous_artifacts.zip 2>/dev/null || true
+          
+          if [ -f previous_artifacts.zip ] && [ -s previous_artifacts.zip ]; then
+            echo "📂 Extracting previous artifacts..."
+            unzip -q -o previous_artifacts.zip -d ./ 2>/dev/null || true
+            
+            # Copy old APKs preserving them
+            if [ -d "public/apks" ] && ls public/apks/*.apk 1> /dev/null 2>&1; then
+              OLD_COUNT=$(ls -1 public/apks/*.apk 2>/dev/null | wc -l)
+              echo "📋 Found ${OLD_COUNT} old APK version(s)"
+              # Move old APKs to temp, will merge later
+              mkdir -p /tmp/old_apks
+              mv public/apks/*.apk /tmp/old_apks/ 2>/dev/null || true
+            fi
+            rm -f previous_artifacts.zip
+          else
+            echo "⚠️  Could not download artifacts via API"
           fi
         else
-          echo "⚠️  Could not download previous artifacts"
+          echo "ℹ️  No previous pages job found via API"
         fi
       else
-        echo "ℹ️  No previous pages artifacts found. This might be the first deployment."
+        echo "⚠️  API not accessible (might need CI/CD token with api scope)"
+        echo "📡 Trying fallback: fetching from published GitLab Pages URL..."
+        
+        # Method 2: Fallback - fetch from published pages
+        PAGES_URL="https://${CI_PROJECT_NAMESPACE}.gitlab.io/${CI_PROJECT_NAME}"
+        STATUS=$(curl -Ls -o old_index.html -w "%{http_code}" "${PAGES_URL}/index.html" || echo "000")
+        
+        if [ "$STATUS" = "200" ]; then
+          echo "✅ Found published pages (HTTP ${STATUS})"
+          # Extract APK links and download them
+          PREV_APKS=$(grep -Eo 'apks/app-v[0-9]+\.apk' old_index.html | sort -u)
+          
+          if [ -n "$PREV_APKS" ]; then
+            mkdir -p /tmp/old_apks
+            echo "$PREV_APKS" | while read apk_path; do
+              apk_name=$(basename "$apk_path")
+              echo "⬇️  Downloading ${apk_name}..."
+              curl -LsSf "${PAGES_URL}/${apk_path}" -o "/tmp/old_apks/${apk_name}" 2>/dev/null || true
+            done
+            
+            OLD_COUNT=$(ls -1 /tmp/old_apks/*.apk 2>/dev/null | wc -l)
+            echo "📋 Downloaded ${OLD_COUNT} old APK version(s)"
+          else
+            echo "ℹ️  No previous APKs found in published pages"
+          fi
+        else
+          echo "ℹ️  Pages not yet published (HTTP ${STATUS}). This is the first deployment."
+        fi
       fi
     
     # Copy new APK from build artifacts
     - cp -r frontend/public/apks/* public/apks/ 2>/dev/null || true
+    
+    # Merge old APKs back (don't overwrite new version)
+    - |
+      if [ -d "/tmp/old_apks" ] && ls /tmp/old_apks/*.apk 1> /dev/null 2>&1; then
+        for old_apk in /tmp/old_apks/*.apk; do
+          apk_name=$(basename "$old_apk")
+          if [ ! -f "public/apks/${apk_name}" ]; then
+            cp "$old_apk" "public/apks/${apk_name}"
+            echo "✅ Restored: ${apk_name}"
+          fi
+        done
+      fi
     
     # Count total versions
     - export TOTAL_VERSIONS=$(ls -1 public/apks/app-*.apk 2>/dev/null | wc -l)
