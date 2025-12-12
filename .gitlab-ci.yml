@@ -234,80 +234,270 @@ pages:
   dependencies:
     - build_flutter_apk                           # Depends on APK build artifacts
   before_script:
-    - apk add --no-cache curl jq                  # Install curl and jq for API calls
+    - apk add --no-cache curl jq coreutils        # Install tools for API calls and date handling
   script:
     # Create public directory structure
     - mkdir -p public/apks
     
-    # Robustly fetch existing APKs from prior GitLab Pages deployment (follows redirects, clearer logs)
+    # Fetch previous pages artifacts from GitLab API to preserve old versions
     - |
-      echo "Fetching existing APKs from GitLab Pages..."
-      PAGES_URL="https://${CI_PROJECT_NAMESPACE}.gitlab.io/${CI_PROJECT_NAME}"
-      STATUS=$(curl -Ls -o old_index.html -w "%{http_code}" "${PAGES_URL}/index.html" || echo 000)
-      if [ "$STATUS" = "200" ] || [ "$STATUS" = "302" ] || [ "$STATUS" = "301" ]; then
-        echo "Existing Pages found (HTTP $STATUS). Extracting previous APK links..."
-        # Extract APK filenames from old index (supports app-v<id>.apk or app-<any>.apk)
-        PREV_APKS=$(grep -Eo 'apks/app-[^"\s]+' old_index.html | sed 's/\"//g' | sort -u)
-        if [ -n "$PREV_APKS" ]; then
-          echo "$PREV_APKS" | while read apk_path; do
-            apk_name=$(basename "$apk_path")
-            if [ -f "public/apks/${apk_name}" ]; then
-              echo "Skipping already present ${apk_name}"
-            else
-              echo "Downloading ${apk_name} from ${PAGES_URL}/${apk_path}..."
-              curl -LsSf "${PAGES_URL}/${apk_path}" -o "public/apks/${apk_name}" || echo "Failed to download ${apk_name}"
-            fi
-          done
+      echo "🔍 Fetching previous Pages artifacts to preserve version history..."
+      
+      # GitLab API endpoint for job artifacts
+      API_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs"
+      
+      # Find the most recent successful pages job (excluding current pipeline)
+      PREV_JOB=$(curl --silent --header "PRIVATE-TOKEN: ${CI_JOB_TOKEN}" \
+        "${API_URL}?scope[]=success&per_page=100" | \
+        jq -r ".[] | select(.name == \"pages\" and .pipeline.id != ${CI_PIPELINE_ID}) | .id" | \
+        head -n 1)
+      
+      if [ -n "$PREV_JOB" ] && [ "$PREV_JOB" != "null" ]; then
+        echo "✅ Found previous pages job: #${PREV_JOB}"
+        echo "📦 Downloading previous artifacts..."
+        
+        # Download and extract previous public folder
+        curl --silent --location --header "PRIVATE-TOKEN: ${CI_JOB_TOKEN}" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/${PREV_JOB}/artifacts" \
+          -o previous_artifacts.zip
+        
+        if [ -f previous_artifacts.zip ]; then
+          unzip -q -o previous_artifacts.zip -d ./
+          
+          # Copy all old APKs (but don't overwrite new ones)
+          if [ -d "public/apks" ]; then
+            cp -n public/apks/*.apk public/apks/ 2>/dev/null || true
+            echo "📋 Preserved old APK versions"
+          fi
         else
-          echo "No prior APK links found in existing index.html."
+          echo "⚠️  Could not download previous artifacts"
         fi
       else
-        echo "Pages not reachable (HTTP ${STATUS}). Proceeding with fresh deployment."
+        echo "ℹ️  No previous pages artifacts found. This might be the first deployment."
       fi
     
     # Copy new APK from build artifacts
     - cp -r frontend/public/apks/* public/apks/ 2>/dev/null || true
     
-    # Generate index.html with ALL APKs (sorted by version, newest first)
+    # Count total versions
+    - export TOTAL_VERSIONS=$(ls -1 public/apks/app-*.apk 2>/dev/null | wc -l)
+    
+    # Generate enhanced index.html with ALL APKs (sorted by version, newest first)
     - |
-      echo "<!DOCTYPE html>
-      <html>
+      cat > public/index.html << 'EOF'
+      <!DOCTYPE html>
+      <html lang="en">
       <head>
-        <title> APK Downloads</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>📱 APK Downloads</title>
         <style>
-          body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-          h1 { color: #333; }
-          ul { list-style: none; padding: 0; }
-          li { padding: 10px; margin: 5px 0; background: #f5f5f5; border-radius: 5px; }
-          a { color: #0066cc; text-decoration: none; }
-          a:hover { text-decoration: underline; }
-          .latest { background: #d4edda; border-left: 4px solid #28a745; }
-          .version { color: #666; font-size: 0.9em; }
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+          }
+          .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+          }
+          .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+          }
+          .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+          }
+          .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+          }
+          .stats {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 10px;
+          }
+          .stat-item {
+            text-align: center;
+          }
+          .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+          }
+          .stat-label {
+            font-size: 0.9em;
+            opacity: 0.8;
+          }
+          .content {
+            padding: 40px 30px;
+          }
+          .version-list {
+            list-style: none;
+          }
+          .version-item {
+            padding: 20px;
+            margin: 15px 0;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.3s ease;
+          }
+          .version-item:hover {
+            transform: translateX(5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+          }
+          .version-item.latest {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            border-left-color: #28a745;
+          }
+          .version-info {
+            flex: 1;
+          }
+          .version-name {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+          }
+          .version-meta {
+            color: #666;
+            font-size: 0.9em;
+          }
+          .badge {
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-right: 10px;
+          }
+          .badge.latest {
+            background: #28a745;
+            color: white;
+          }
+          .badge.old {
+            background: #6c757d;
+            color: white;
+          }
+          .download-btn {
+            padding: 12px 30px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 25px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: inline-block;
+          }
+          .download-btn:hover {
+            background: #5568d3;
+            transform: scale(1.05);
+          }
+          .footer {
+            text-align: center;
+            padding: 20px;
+            background: #f8f9fa;
+            color: #666;
+            font-size: 0.9em;
+          }
+          .no-versions {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+          }
         </style>
       </head>
       <body>
-        <h1>📱 APK Downloads</h1>
-        <p>Download the Android app below. Latest version is highlighted.</p>
-        <ul>" > public/index.html
+        <div class="container">
+          <div class="header">
+            <h1>📱 APK Downloads</h1>
+            <p>Download your app version</p>
+            <div class="stats">
+              <div class="stat-item">
+                <div class="stat-number">TOTAL_VERSIONS_PLACEHOLDER</div>
+                <div class="stat-label">Total Versions</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-number">#PIPELINE_ID_PLACEHOLDER</div>
+                <div class="stat-label">Latest Build</div>
+              </div>
+            </div>
+          </div>
+          <div class="content">
+            <ul class="version-list">
+      EOF
       
-      # List APKs sorted by version number (newest first). If no vNNN pattern, fallback to name sort.
+      # Replace placeholders
+      sed -i "s/TOTAL_VERSIONS_PLACEHOLDER/${TOTAL_VERSIONS}/" public/index.html
+      sed -i "s/PIPELINE_ID_PLACEHOLDER/${CI_PIPELINE_IID}/" public/index.html
+      
+      # List APKs sorted by version number (newest first)
       FIRST=true
       APK_LIST=$(ls -1 public/apks/app-*.apk 2>/dev/null | sort -t'v' -k2 -rn)
-      for apk in $APK_LIST; do
-        apk_name=$(basename "$apk")
-        if [ "$FIRST" = true ]; then
-          echo "<li class='latest'>🆕 <a href='apks/${apk_name}'>${apk_name}</a> <span class='version'>(Latest)</span></li>" >> public/index.html
-          FIRST=false
-        else
-          echo "<li><a href='apks/${apk_name}'>${apk_name}</a></li>" >> public/index.html
-        fi
-      done
       
-      echo "</ul>
-        <hr>
-        <p><small>Built with GitLab CI/CD | Pipeline #${CI_PIPELINE_IID}</small></p>
+      if [ -n "$APK_LIST" ]; then
+        for apk in $APK_LIST; do
+          apk_name=$(basename "$apk")
+          apk_size=$(du -h "$apk" | cut -f1)
+          
+          if [ "$FIRST" = true ]; then
+            cat >> public/index.html << EOF
+              <li class="version-item latest">
+                <div class="version-info">
+                  <div class="version-name">
+                    <span class="badge latest">🆕 LATEST</span>
+                    ${apk_name}
+                  </div>
+                  <div class="version-meta">Size: ${apk_size} | Pipeline: #${CI_PIPELINE_IID}</div>
+                </div>
+                <a href="apks/${apk_name}" class="download-btn" download>Download</a>
+              </li>
+      EOF
+            FIRST=false
+          else
+            cat >> public/index.html << EOF
+              <li class="version-item">
+                <div class="version-info">
+                  <div class="version-name">
+                    <span class="badge old">OLD</span>
+                    ${apk_name}
+                  </div>
+                  <div class="version-meta">Size: ${apk_size}</div>
+                </div>
+                <a href="apks/${apk_name}" class="download-btn" download>Download</a>
+              </li>
+      EOF
+          fi
+        done
+      else
+        echo '<li class="no-versions">No versions available yet.</li>' >> public/index.html
+      fi
+      
+      cat >> public/index.html << 'EOF'
+            </ul>
+          </div>
+          <div class="footer">
+            Built with GitLab CI/CD | 🚀 Automated Deployment
+          </div>
+        </div>
       </body>
-      </html>" >> public/index.html
+      </html>
+      EOF
   artifacts:
     paths:
       - public                                    # Publish public folder for GitLab Pages
