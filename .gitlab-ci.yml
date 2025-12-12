@@ -68,17 +68,29 @@ build_flutter_apk:
       - frontend/.pub-cache/
       - frontend/build/
     policy: pull-push
+  before_script:
+    - apk add --no-cache curl
   script:
     - cd frontend                    # Navigate to Flutter frontend directory
     - flutter pub get                         # Fetch Flutter dependencies
     - flutter build apk --release             # Build release APK for Android
     - APK_VERSION="v${CI_PIPELINE_IID}"       # Set APK version based on pipeline ID (unique build number)
-    - mv build/app/outputs/flutter-apk/app-release.apk app-$APK_VERSION.apk  # Rename APK with version
-    - mkdir -p public/apks                     # Create directory to hold APKs for download page
-    - mv app-$APK_VERSION.apk public/apks/    # Move APK to public directory for GitLab Pages
+    - mv build/app/outputs/flutter-apk/app-release.apk ../app-$APK_VERSION.apk  # Rename APK with version
+    - cd ..
+    
+    # Upload APK to GitLab Package Registry (PERMANENT STORAGE)
+    - |
+      echo "📦 Uploading APK to GitLab Package Registry..."
+      PACKAGE_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/apk-builds/${APK_VERSION}/app-${APK_VERSION}.apk"
+      
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+           --upload-file "app-${APK_VERSION}.apk" \
+           "${PACKAGE_URL}"
+      
+      echo "✅ APK uploaded to registry: ${PACKAGE_URL}"
   artifacts:
     paths:
-      - frontend/public               # Save public directory (APK + index.html) for next stage
+      - app-*.apk               # Save APK as artifact too
   only:
     - main
 
@@ -225,85 +237,33 @@ build_flutter_apk:
 pages:
   stage: publish_pages
   image: alpine:latest
-  dependencies:
-    - build_flutter_apk                           # Depends on APK build artifacts
   before_script:
-    - apk add --no-cache curl unzip               # Install minimal tools
+    - apk add --no-cache curl jq               # Install curl and jq for API calls
   script:
     # Create public directory structure
-    - mkdir -p public/apks /tmp/old_apks
+    - mkdir -p public
     
-    # Fetch ALL previous APK versions from published GitLab Pages URL
+    # Fetch ALL APK versions from GitLab Package Registry (PERMANENT STORAGE)
     - |
-      echo "🔍 Fetching ALL previous APK versions from GitLab Pages..."
-      PAGES_URL="https://${CI_PROJECT_NAMESPACE}.gitlab.io/${CI_PROJECT_NAME}"
+      echo "🔍 Fetching ALL APK versions from GitLab Package Registry..."
       
-      # Try to fetch existing index.html
-      if curl -Ls "${PAGES_URL}/index.html" -o old_index.html 2>/dev/null; then
-        echo "✅ Found published pages, extracting ALL APK links..."
-        
-        # Extract ALL APK links from HTML (matches: apks/app-*.apk)
-        grep -Eo 'apks/app-[^"]+\.apk' old_index.html | sort -u > apk_list.txt 2>/dev/null || true
-        
-        if [ -s apk_list.txt ]; then
-          echo "📦 Found $(wc -l < apk_list.txt) APK file(s) to download"
-          
-          # Download each old APK
-          while IFS= read -r apk_path; do
-            apk_name=$(basename "$apk_path")
-            echo "⬇️  Downloading ${apk_name}..."
-            
-            if curl -LsSf "${PAGES_URL}/${apk_path}" -o "/tmp/old_apks/${apk_name}" 2>/dev/null; then
-              echo "   ✅ Success: ${apk_name}"
-            else
-              echo "   ❌ Failed: ${apk_name}"
-            fi
-          done < apk_list.txt
-          
-          OLD_COUNT=$(ls -1 /tmp/old_apks/*.apk 2>/dev/null | wc -l || echo 0)
-          echo "✅ Successfully preserved ${OLD_COUNT} old version(s)"
-          ls -lh /tmp/old_apks/ 2>/dev/null || true
-        else
-          echo "ℹ️  No previous APKs found in index.html"
-        fi
+      # Get all packages from the registry
+      PACKAGES=$(curl --silent --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages?per_page=100" | \
+        jq -r '.[] | select(.name == "apk-builds") | .version' | sort -V -r)
+      
+      if [ -n "$PACKAGES" ]; then
+        echo "✅ Found $(echo "$PACKAGES" | wc -l) version(s) in registry"
+        echo "$PACKAGES"
       else
-        echo "ℹ️  No published pages yet. This is the first deployment."
+        echo "ℹ️  No packages found yet in registry"
       fi
-    
-    # Copy NEW APK from build artifacts FIRST
-    - |
-      echo "📦 Copying NEW APK from build artifacts..."
-      if [ -d "frontend/public/apks" ]; then
-        cp -v frontend/public/apks/*.apk public/apks/ 2>/dev/null || true
-        echo "✅ New APK copied"
-      else
-        echo "⚠️  No frontend/public/apks directory found"
-      fi
-    
-    # Copy old APKs to public directory (don't overwrite new one)
-    - |
-      if [ -d "/tmp/old_apks" ]; then
-        echo "📋 Merging old APKs to public directory..."
-        for old_apk in /tmp/old_apks/*.apk; do
-          [ -f "$old_apk" ] || continue
-          apk_name=$(basename "$old_apk")
-          if [ ! -f "public/apks/${apk_name}" ]; then
-            cp -v "$old_apk" "public/apks/${apk_name}"
-          else
-            echo "   ⏭️  Skipped ${apk_name} (already exists)"
-          fi
-        done
-        echo "✅ Old APKs merged"
-      fi
-    
-    # List all APKs we have now
-    - |
-      echo "📊 Final APK list in public/apks:"
-      ls -lh public/apks/ 2>/dev/null || echo "❌ No APKs found"
-      echo "Total versions: $(ls -1 public/apks/app-*.apk 2>/dev/null | wc -l)"
+      
+      # Store package list for HTML generation
+      echo "$PACKAGES" > versions.txt
     
     # Count total versions
-    - export TOTAL_VERSIONS=$(ls -1 public/apks/app-*.apk 2>/dev/null | wc -l)
+    - export TOTAL_VERSIONS=$(cat versions.txt | wc -l)
     
     # Generate enhanced index.html with ALL APKs (sorted by version, newest first)
     - |
@@ -469,14 +429,14 @@ pages:
       sed -i "s/TOTAL_VERSIONS_PLACEHOLDER/${TOTAL_VERSIONS}/" public/index.html
       sed -i "s/PIPELINE_ID_PLACEHOLDER/${CI_PIPELINE_IID}/" public/index.html
       
-      # List APKs sorted by version number (newest first)
+      # Generate download links for ALL versions from Package Registry
       FIRST=true
-      APK_LIST=$(ls -1 public/apks/app-*.apk 2>/dev/null | sort -t'v' -k2 -rn)
       
-      if [ -n "$APK_LIST" ]; then
-        for apk in $APK_LIST; do
-          apk_name=$(basename "$apk")
-          apk_size=$(du -h "$apk" | cut -f1)
+      if [ -s versions.txt ]; then
+        while IFS= read -r version; do
+          [ -z "$version" ] && continue
+          
+          DOWNLOAD_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/apk-builds/${version}/app-${version}.apk"
           
           if [ "$FIRST" = true ]; then
             cat >> public/index.html << EOF
@@ -484,11 +444,11 @@ pages:
                 <div class="version-info">
                   <div class="version-name">
                     <span class="badge latest">🆕 LATEST</span>
-                    ${apk_name}
+                    app-${version}.apk
                   </div>
-                  <div class="version-meta">Size: ${apk_size} | Pipeline: #${CI_PIPELINE_IID}</div>
+                  <div class="version-meta">Pipeline: #${CI_PIPELINE_IID} | Stored in Package Registry</div>
                 </div>
-                <a href="apks/${apk_name}" class="download-btn" download>Download</a>
+                <a href="${DOWNLOAD_URL}" class="download-btn" download>Download</a>
               </li>
       EOF
             FIRST=false
@@ -498,15 +458,15 @@ pages:
                 <div class="version-info">
                   <div class="version-name">
                     <span class="badge old">OLD</span>
-                    ${apk_name}
+                    app-${version}.apk
                   </div>
-                  <div class="version-meta">Size: ${apk_size}</div>
+                  <div class="version-meta">Stored in Package Registry</div>
                 </div>
-                <a href="apks/${apk_name}" class="download-btn" download>Download</a>
+                <a href="${DOWNLOAD_URL}" class="download-btn" download>Download</a>
               </li>
       EOF
           fi
-        done
+        done < versions.txt
       else
         echo '<li class="no-versions">No versions available yet.</li>' >> public/index.html
       fi
