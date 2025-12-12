@@ -270,18 +270,37 @@ pages:
         echo "ℹ️  No published pages yet. This is the first deployment."
       fi
     
-    # Copy old APKs to public directory first
+    # Copy NEW APK from build artifacts FIRST
+    - |
+      echo "📦 Copying NEW APK from build artifacts..."
+      if [ -d "frontend/public/apks" ]; then
+        cp -v frontend/public/apks/*.apk public/apks/ 2>/dev/null || true
+        echo "✅ New APK copied"
+      else
+        echo "⚠️  No frontend/public/apks directory found"
+      fi
+    
+    # Copy old APKs to public directory (don't overwrite new one)
     - |
       if [ -d "/tmp/old_apks" ]; then
-        echo "📋 Copying all old APKs to public directory..."
-        cp -v /tmp/old_apks/*.apk public/apks/ 2>/dev/null || true
-        echo "✅ Old APKs copied"
+        echo "📋 Merging old APKs to public directory..."
+        for old_apk in /tmp/old_apks/*.apk; do
+          [ -f "$old_apk" ] || continue
+          apk_name=$(basename "$old_apk")
+          if [ ! -f "public/apks/${apk_name}" ]; then
+            cp -v "$old_apk" "public/apks/${apk_name}"
+          else
+            echo "   ⏭️  Skipped ${apk_name} (already exists)"
+          fi
+        done
+        echo "✅ Old APKs merged"
       fi
     
     # List all APKs we have now
     - |
-      echo "📊 Current APKs in public/apks:"
-      ls -lh public/apks/ 2>/dev/null || echo "No APKs found"
+      echo "📊 Final APK list in public/apks:"
+      ls -lh public/apks/ 2>/dev/null || echo "❌ No APKs found"
+      echo "Total versions: $(ls -1 public/apks/app-*.apk 2>/dev/null | wc -l)"
     
     # Count total versions
     - export TOTAL_VERSIONS=$(ls -1 public/apks/app-*.apk 2>/dev/null | wc -l)
