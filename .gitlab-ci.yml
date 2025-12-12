@@ -18,49 +18,49 @@ variables:
   BACKEND_IMAGE: azizhk444/nodejserver  # Docker image base name
   IMAGE_TAG: $CI_PIPELINE_IID      # Use pipeline ID as image tag for traceability
 
-terraform_apply:
-  stage: infrastructure
-  image:
-    name: hashicorp/terraform:light # Terraform official image (lightweight)
-    entrypoint: [""]                # Override entrypoint for terraform CLI commands
-  variables:
-    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io  # Terraform Cloud API token (seul variable nécessaire)
-  script:
-    - cd backend/terraform             # Move into Terraform config directory
-    - terraform init                            # Initialize Terraform (download providers, modules)
-    - terraform apply -auto-approve            # Apply Terraform config, auto-approve without prompt
-    - terraform output -raw alb_dns_name > ../../alb_dns.txt    # Extract ALB DNS name
-    - terraform output -raw asg_name > ../../asg_name.txt       # Extract ASG name
-    - terraform output -raw mongodb_connection_string > ../../mongo_uri.txt  # Extract Atlas URI
-  artifacts:
-    paths:
-      - alb_dns.txt                            # Save ALB DNS as artifact
-      - asg_name.txt                           # Save ASG name as artifact
-      - mongo_uri.txt                          # Save MongoDB Atlas URI as artifact
-  only:
-    - main                                    # Run this job only on main branch
+# terraform_apply:
+#   stage: infrastructure
+#   image:
+#     name: hashicorp/terraform:light # Terraform official image (lightweight)
+#     entrypoint: [""]                # Override entrypoint for terraform CLI commands
+#   variables:
+#     TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io  # Terraform Cloud API token (seul variable nécessaire)
+#   script:
+#     - cd backend/terraform             # Move into Terraform config directory
+#     - terraform init                            # Initialize Terraform (download providers, modules)
+#     - terraform apply -auto-approve            # Apply Terraform config, auto-approve without prompt
+#     - terraform output -raw alb_dns_name > ../../alb_dns.txt    # Extract ALB DNS name
+#     - terraform output -raw asg_name > ../../asg_name.txt       # Extract ASG name
+#     - terraform output -raw mongodb_connection_string > ../../mongo_uri.txt  # Extract Atlas URI
+#   artifacts:
+#     paths:
+#       - alb_dns.txt                            # Save ALB DNS as artifact
+#       - asg_name.txt                           # Save ASG name as artifact
+#       - mongo_uri.txt                          # Save MongoDB Atlas URI as artifact
+#   only:
+#     - main                                    # Run this job only on main branch
 
-update_flutter_config:
-  stage: configure_flutter
-  image: alpine:latest                        # Use lightweight Alpine Linux image for scripting
-  script:
-    - apk add --no-cache curl bash            # Installl curl and bash in Alpine
-    - export ALB_DNS=$(cat alb_dns.txt)       # Read the ALB DNS from the artifact file
-    - sed -i "s|final url = .*|final url = 'http://$ALB_DNS/';|" frontend/lib/config.dart  
-      # Replace the backend URL in Flutter config with ALB DNS (port 80, no need to specify)
-  artifacts:
-    paths:
-      - frontend/lib/config.dart     # Save updated config file for next job
-  dependencies:
-    - terraform_apply                         # Depends on terraform_apply to get alb_dns.txt
-  only:
-    - main
+# update_flutter_config:
+#   stage: configure_flutter
+#   image: alpine:latest                        # Use lightweight Alpine Linux image for scripting
+#   script:
+#     - apk add --no-cache curl bash            # Installl curl and bash in Alpine
+#     - export ALB_DNS=$(cat alb_dns.txt)       # Read the ALB DNS from the artifact file
+#     - sed -i "s|final url = .*|final url = 'http://$ALB_DNS/';|" frontend/lib/config.dart  
+#       # Replace the backend URL in Flutter config with ALB DNS (port 80, no need to specify)
+#   artifacts:
+#     paths:
+#       - frontend/lib/config.dart     # Save updated config file for next job
+#   dependencies:
+#     - terraform_apply                         # Depends on terraform_apply to get alb_dns.txt
+#   only:
+#     - main
 
 build_flutter_apk:
   stage: build_flutter_android
   image: ghcr.io/cirruslabs/flutter:3.32.6  # Flutter SDK image with necessary tools pre-installed
-  dependencies:
-    - update_flutter_config                   # Use updated Flutter config from previous job
+  # dependencies:
+  #   - update_flutter_config                   # Use updated Flutter config from previous job
   cache:
     key: flutter-build-$CI_COMMIT_REF_SLUG
     paths:
@@ -88,145 +88,145 @@ build_flutter_apk:
   only:
     - main
 
-flutter_test:
-  stage: test
-  image: ghcr.io/cirruslabs/flutter:3.32.6  # Same Flutter SDK image for tests
-  cache:
-    key: flutter-build-$CI_COMMIT_REF_SLUG
-    paths:
-      - frontend/.dart_tool/
-      - frontend/.pub-cache/
-    policy: pull
-  script:
-    - cd frontend                    # Move to Flutter frontend directory
-    - flutter pub get                         # Get dependencies for tests
-    - flutter test --coverage                 # Run tests and collect coverage info
-  artifacts:
-    paths:
-      - frontend/coverage/lcov.info # Save test coverage report as artifact
-  only:
-    - main
+# flutter_test:
+#   stage: test
+#   image: ghcr.io/cirruslabs/flutter:3.32.6  # Same Flutter SDK image for tests
+#   cache:
+#     key: flutter-build-$CI_COMMIT_REF_SLUG
+#     paths:
+#       - frontend/.dart_tool/
+#       - frontend/.pub-cache/
+#     policy: pull
+#   script:
+#     - cd frontend                    # Move to Flutter frontend directory
+#     - flutter pub get                         # Get dependencies for tests
+#     - flutter test --coverage                 # Run tests and collect coverage info
+#   artifacts:
+#     paths:
+#       - frontend/coverage/lcov.info # Save test coverage report as artifact
+#   only:
+#     - main
 
-build_backend:
-  stage: build_node
-  script:
-    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"  # Log in to Docker registry
-    - docker build -t $BACKEND_IMAGE:$IMAGE_TAG ./backend  # Build with version tag
-    - docker build -t $BACKEND_IMAGE:latest ./backend      # Also tag as latest
-    - docker push $BACKEND_IMAGE:$IMAGE_TAG                         # Push versioned image
-    - docker push $BACKEND_IMAGE:latest                             # Push latest tag
-  only:
-    - main
+# build_backend:
+#   stage: build_node
+#   script:
+#     - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"  # Log in to Docker registry
+#     - docker build -t $BACKEND_IMAGE:$IMAGE_TAG ./backend  # Build with version tag
+#     - docker build -t $BACKEND_IMAGE:latest ./backend      # Also tag as latest
+#     - docker push $BACKEND_IMAGE:$IMAGE_TAG                         # Push versioned image
+#     - docker push $BACKEND_IMAGE:latest                             # Push latest tag
+#   only:
+#     - main
 
 
 
-deploy_staging:
-  stage: deploy  # This job runs in the "deploy" stage of the pipeline
+# deploy_staging:
+#   stage: deploy  # This job runs in the "deploy" stage of the pipeline
 
-  variables:
-    SSH_HOST: "185.44.67.203"  # VPS IP address
-    SSH_USER: "root"           # SSH user (be cautious using root in production)
-    SSH_PORT: "51821"          # Custom SSH port (non-default for security)
+#   variables:
+#     SSH_HOST: "185.44.67.203"  # VPS IP address
+#     SSH_USER: "root"           # SSH user (be cautious using root in production)
+#     SSH_PORT: "51821"          # Custom SSH port (non-default for security)
 
-  before_script:
-  - apk add --no-cache openssh docker-cli    # Install OpenSSH and Docker CLI
-  - mkdir -p ~/.ssh                      # Create SSH config directory
-  - set +x                              # Disable command echo
-  - echo "$SSH_VPS" > ~/.ssh/id_rsa     # Save SSH private key from GitLab CI/CD variable
-  - chmod 600 ~/.ssh/id_rsa              # Secure permissions on the private key
-  - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"  # Login to Docker registry
-  - set -x                              # Re-enable command echo
-  - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config  # Disable strict host key checking
-  - export MONGODB_URI=$(cat mongo_uri.txt)  # Read Atlas URI from artifact
+#   before_script:
+#   - apk add --no-cache openssh docker-cli    # Install OpenSSH and Docker CLI
+#   - mkdir -p ~/.ssh                      # Create SSH config directory
+#   - set +x                              # Disable command echo
+#   - echo "$SSH_VPS" > ~/.ssh/id_rsa     # Save SSH private key from GitLab CI/CD variable
+#   - chmod 600 ~/.ssh/id_rsa              # Secure permissions on the private key
+#   - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"  # Login to Docker registry
+#   - set -x                              # Re-enable command echo
+#   - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config  # Disable strict host key checking
+#   - export MONGODB_URI=$(cat mongo_uri.txt)  # Read Atlas URI from artifact
 
-  script:
-    # Upload the staging Docker Compose file to the VPS using secure copy (SCP)
-    - scp -P $SSH_PORT backend/docker-compose.staging.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
+#   script:
+#     # Upload the staging Docker Compose file to the VPS using secure copy (SCP)
+#     - scp -P $SSH_PORT backend/docker-compose.staging.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
 
-    # SSH into the server and run Docker Compose with Atlas URI
-    - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
-        export IMAGE_TAG=$IMAGE_TAG &&
-        export MONGODB_URI='$MONGODB_URI' &&
-        docker compose -f /root/docker-compose.yml down &&
-        docker compose -f /root/docker-compose.yml pull &&
-        docker compose -f /root/docker-compose.yml up -d
-      "
+#     # SSH into the server and run Docker Compose with Atlas URI
+#     - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
+#         export IMAGE_TAG=$IMAGE_TAG &&
+#         export MONGODB_URI='$MONGODB_URI' &&
+#         docker compose -f /root/docker-compose.yml down &&
+#         docker compose -f /root/docker-compose.yml pull &&
+#         docker compose -f /root/docker-compose.yml up -d
+#       "
 
-  dependencies:
-    - terraform_apply  # Need mongo_uri.txt artifact
+#   dependencies:
+#     - terraform_apply  # Need mongo_uri.txt artifact
 
-  only:
-    - main  # Run this job only on the main branch
+#   only:
+#     - main  # Run this job only on the main branch
 
-  environment:
-    name: staging  # Declare this job as a deployment to the 'staging' environment
+#   environment:
+#     name: staging  # Declare this job as a deployment to the 'staging' environment
 
   
 
 
 
-deploy_app:
-  stage: deploy
-  image: 
-    name: amazon/aws-cli:latest
-    entrypoint: [""]                          # Override entrypoint for AWS CLI
-  variables:
-    AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
-    AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
-    AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
-  before_script:
-    - yum install -y jq || true               # Install jq for JSON parsing
-    - export ASG_NAME=$(cat asg_name.txt)     # Read ASG name from artifact
-    - export MONGODB_URI=$(cat mongo_uri.txt) # Read Atlas URI from artifact
-  script:
-    # Trigger ASG instance refresh to deploy new version
-    - |
-      echo "Starting ASG instance refresh for $ASG_NAME..."
-      aws autoscaling start-instance-refresh \
-        --auto-scaling-group-name "$ASG_NAME" \
-        --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 120}' \
-        --strategy Rolling
-    # Wait for refresh to complete with TIMEOUT (max 10 minutes)
-    - |
-      echo "Waiting for instance refresh to complete (timeout: 10 min)..."
-      TIMEOUT=600
-      ELAPSED=0
-      while [ $ELAPSED -lt $TIMEOUT ]; do
-        STATUS=$(aws autoscaling describe-instance-refreshes \
-          --auto-scaling-group-name "$ASG_NAME" \
-          --query 'InstanceRefreshes[0].Status' \
-          --output text)
-        echo "[$ELAPSED s] Current status: $STATUS"
-        if [ "$STATUS" = "Successful" ]; then
-          echo "✅ Instance refresh completed successfully!"
-          exit 0
-        elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
-          echo "❌ Instance refresh failed! Checking instance health..."
-          aws autoscaling describe-instance-refreshes \
-            --auto-scaling-group-name "$ASG_NAME" \
-            --query 'InstanceRefreshes[0].StatusReason' \
-            --output text
-          exit 1
-        fi
-        sleep 20
-        ELAPSED=$((ELAPSED + 20))
-      done
-      echo "⏰ Timeout reached! Cancelling instance refresh..."
-      aws autoscaling cancel-instance-refresh --auto-scaling-group-name "$ASG_NAME" || true
-      exit 1
-  dependencies:
-    - terraform_apply                         # Need asg_name.txt and mongo_uri.txt
-    - build_backend                           # Need new Docker image pushed first
-  only:
-    - main
-  environment:
-    name: production
-    url: http://$ALB_DNS
-  when: manual                                # Manual deployment trigger
-  needs:
-    - deploy_staging
-    - terraform_apply
-    - build_backend 
+# deploy_app:
+#   stage: deploy
+#   image: 
+#     name: amazon/aws-cli:latest
+#     entrypoint: [""]                          # Override entrypoint for AWS CLI
+#   variables:
+#     AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+#     AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+#     AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+#   before_script:
+#     - yum install -y jq || true               # Install jq for JSON parsing
+#     - export ASG_NAME=$(cat asg_name.txt)     # Read ASG name from artifact
+#     - export MONGODB_URI=$(cat mongo_uri.txt) # Read Atlas URI from artifact
+#   script:
+#     # Trigger ASG instance refresh to deploy new version
+#     - |
+#       echo "Starting ASG instance refresh for $ASG_NAME..."
+#       aws autoscaling start-instance-refresh \
+#         --auto-scaling-group-name "$ASG_NAME" \
+#         --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 120}' \
+#         --strategy Rolling
+#     # Wait for refresh to complete with TIMEOUT (max 10 minutes)
+#     - |
+#       echo "Waiting for instance refresh to complete (timeout: 10 min)..."
+#       TIMEOUT=600
+#       ELAPSED=0
+#       while [ $ELAPSED -lt $TIMEOUT ]; do
+#         STATUS=$(aws autoscaling describe-instance-refreshes \
+#           --auto-scaling-group-name "$ASG_NAME" \
+#           --query 'InstanceRefreshes[0].Status' \
+#           --output text)
+#         echo "[$ELAPSED s] Current status: $STATUS"
+#         if [ "$STATUS" = "Successful" ]; then
+#           echo "✅ Instance refresh completed successfully!"
+#           exit 0
+#         elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+#           echo "❌ Instance refresh failed! Checking instance health..."
+#           aws autoscaling describe-instance-refreshes \
+#             --auto-scaling-group-name "$ASG_NAME" \
+#             --query 'InstanceRefreshes[0].StatusReason' \
+#             --output text
+#           exit 1
+#         fi
+#         sleep 20
+#         ELAPSED=$((ELAPSED + 20))
+#       done
+#       echo "⏰ Timeout reached! Cancelling instance refresh..."
+#       aws autoscaling cancel-instance-refresh --auto-scaling-group-name "$ASG_NAME" || true
+#       exit 1
+#   dependencies:
+#     - terraform_apply                         # Need asg_name.txt and mongo_uri.txt
+#     - build_backend                           # Need new Docker image pushed first
+#   only:
+#     - main
+#   environment:
+#     name: production
+#     url: http://$ALB_DNS
+#   when: manual                                # Manual deployment trigger
+#   needs:
+#     - deploy_staging
+#     - terraform_apply
+#     - build_backend 
 
 pages:
   stage: publish_pages
@@ -234,92 +234,48 @@ pages:
   dependencies:
     - build_flutter_apk                           # Depends on APK build artifacts
   before_script:
-    - apk add --no-cache curl jq coreutils unzip  # Install tools for API calls and extraction
+    - apk add --no-cache curl unzip               # Install minimal tools
   script:
     # Create public directory structure
-    - mkdir -p public/apks
+    - mkdir -p public/apks /tmp/old_apks
     
-    # Fetch previous pages artifacts to preserve old versions (with fallback methods)
+    # Fetch previous pages artifacts from published URL
     - |
-      echo "🔍 Fetching previous Pages artifacts to preserve version history..."
+      echo "🔍 Fetching previous APK versions from GitLab Pages..."
+      PAGES_URL="https://${CI_PROJECT_NAMESPACE}.gitlab.io/${CI_PROJECT_NAME}"
       
-      # Method 1: Try GitLab API with job token
-      API_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs"
-      API_RESPONSE=$(curl --silent --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        "${API_URL}?scope[]=success&per_page=100" 2>/dev/null || echo "")
-      
-      # Check if we got valid JSON
-      if echo "$API_RESPONSE" | jq empty 2>/dev/null; then
-        echo "✅ API response valid, searching for previous pages job..."
-        PREV_JOB=$(echo "$API_RESPONSE" | \
-          jq -r ".[] | select(.name == \"pages\" and .pipeline.id != ${CI_PIPELINE_ID}) | .id" | \
-          head -n 1)
+      # Try to fetch existing index.html
+      if curl -Ls "${PAGES_URL}/index.html" -o old_index.html 2>/dev/null; then
+        echo "✅ Found published pages, extracting APK links..."
         
-        if [ -n "$PREV_JOB" ] && [ "$PREV_JOB" != "null" ]; then
-          echo "✅ Found previous pages job: #${PREV_JOB}"
-          echo "📦 Downloading previous artifacts..."
+        # Extract all APK links from HTML (matches: apks/app-vXXX.apk)
+        grep -Eo 'apks/app-v[0-9]+\.apk' old_index.html > apk_list.txt 2>/dev/null || true
+        
+        if [ -s apk_list.txt ]; then
+          # Download each old APK
+          while read apk_path; do
+            apk_name=$(basename "$apk_path")
+            echo "⬇️  Downloading ${apk_name}..."
+            curl -LsSf "${PAGES_URL}/${apk_path}" -o "/tmp/old_apks/${apk_name}" 2>/dev/null || echo "Failed: ${apk_name}"
+          done < apk_list.txt
           
-          curl --silent --location --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-            "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/jobs/${PREV_JOB}/artifacts" \
-            -o previous_artifacts.zip 2>/dev/null || true
-          
-          if [ -f previous_artifacts.zip ] && [ -s previous_artifacts.zip ]; then
-            echo "📂 Extracting previous artifacts..."
-            unzip -q -o previous_artifacts.zip -d ./ 2>/dev/null || true
-            
-            # Copy old APKs preserving them
-            if [ -d "public/apks" ] && ls public/apks/*.apk 1> /dev/null 2>&1; then
-              OLD_COUNT=$(ls -1 public/apks/*.apk 2>/dev/null | wc -l)
-              echo "📋 Found ${OLD_COUNT} old APK version(s)"
-              # Move old APKs to temp, will merge later
-              mkdir -p /tmp/old_apks
-              mv public/apks/*.apk /tmp/old_apks/ 2>/dev/null || true
-            fi
-            rm -f previous_artifacts.zip
-          else
-            echo "⚠️  Could not download artifacts via API"
-          fi
+          OLD_COUNT=$(ls -1 /tmp/old_apks/*.apk 2>/dev/null | wc -l || echo 0)
+          echo "📋 Preserved ${OLD_COUNT} old version(s)"
         else
-          echo "ℹ️  No previous pages job found via API"
+          echo "ℹ️  No previous APKs found"
         fi
       else
-        echo "⚠️  API not accessible (might need CI/CD token with api scope)"
-        echo "📡 Trying fallback: fetching from published GitLab Pages URL..."
-        
-        # Method 2: Fallback - fetch from published pages
-        PAGES_URL="https://${CI_PROJECT_NAMESPACE}.gitlab.io/${CI_PROJECT_NAME}"
-        STATUS=$(curl -Ls -o old_index.html -w "%{http_code}" "${PAGES_URL}/index.html" || echo "000")
-        
-        if [ "$STATUS" = "200" ]; then
-          echo "✅ Found published pages (HTTP ${STATUS})"
-          # Extract APK links and download them
-          PREV_APKS=$(grep -Eo 'apks/app-v[0-9]+\.apk' old_index.html | sort -u)
-          
-          if [ -n "$PREV_APKS" ]; then
-            mkdir -p /tmp/old_apks
-            echo "$PREV_APKS" | while read apk_path; do
-              apk_name=$(basename "$apk_path")
-              echo "⬇️  Downloading ${apk_name}..."
-              curl -LsSf "${PAGES_URL}/${apk_path}" -o "/tmp/old_apks/${apk_name}" 2>/dev/null || true
-            done
-            
-            OLD_COUNT=$(ls -1 /tmp/old_apks/*.apk 2>/dev/null | wc -l)
-            echo "📋 Downloaded ${OLD_COUNT} old APK version(s)"
-          else
-            echo "ℹ️  No previous APKs found in published pages"
-          fi
-        else
-          echo "ℹ️  Pages not yet published (HTTP ${STATUS}). This is the first deployment."
-        fi
+        echo "ℹ️  No published pages yet. This is the first deployment."
       fi
     
     # Copy new APK from build artifacts
     - cp -r frontend/public/apks/* public/apks/ 2>/dev/null || true
     
-    # Merge old APKs back (don't overwrite new version)
+    # Merge old APKs (don't overwrite new version)
     - |
-      if [ -d "/tmp/old_apks" ] && ls /tmp/old_apks/*.apk 1> /dev/null 2>&1; then
+      if [ -d "/tmp/old_apks" ]; then
         for old_apk in /tmp/old_apks/*.apk; do
+          [ -f "$old_apk" ] || continue
           apk_name=$(basename "$old_apk")
           if [ ! -f "public/apks/${apk_name}" ]; then
             cp "$old_apk" "public/apks/${apk_name}"
