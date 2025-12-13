@@ -276,23 +276,25 @@ pages:
         <title>📱 APK Downloads</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #fff;
+            color: #111;
             min-height: 100vh;
             padding: 20px;
           }
           .container {
             max-width: 900px;
             margin: 0 auto;
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            background: #fff;
+            border-radius: 0;
+            box-shadow: none;
+            border: 1px solid #222;
             overflow: hidden;
           }
           .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background: #111;
+            color: #fff;
             padding: 40px 30px;
             text-align: center;
           }
@@ -333,21 +335,22 @@ pages:
           .version-item {
             padding: 20px;
             margin: 15px 0;
-            background: #f8f9fa;
-            border-radius: 10px;
-            border-left: 4px solid #667eea;
+            background: #fff;
+            border-radius: 0;
+            border-left: 4px solid #111;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            transition: all 0.3s ease;
+            border-bottom: 1px solid #eee;
+            transition: none;
           }
           .version-item:hover {
-            transform: translateX(5px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            background: #f4f4f4;
+            box-shadow: none;
           }
           .version-item.latest {
-            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-            border-left-color: #28a745;
+            background: #eee;
+            border-left-color: #111;
           }
           .version-info {
             flex: 1;
@@ -364,39 +367,47 @@ pages:
           }
           .badge {
             padding: 5px 15px;
-            border-radius: 20px;
+            border-radius: 0;
             font-size: 0.85em;
             font-weight: 600;
             margin-right: 10px;
+            background: #111;
+            color: #fff;
+            border: 1px solid #111;
           }
           .badge.latest {
-            background: #28a745;
-            color: white;
+            background: #fff;
+            color: #111;
+            border: 1px solid #111;
           }
           .badge.old {
-            background: #6c757d;
-            color: white;
+            background: #fff;
+            color: #111;
+            border: 1px solid #111;
           }
           .download-btn {
             padding: 12px 30px;
-            background: #667eea;
-            color: white;
+            background: #111;
+            color: #fff;
             text-decoration: none;
-            border-radius: 25px;
+            border-radius: 0;
             font-weight: 600;
-            transition: all 0.3s ease;
+            transition: none;
             display: inline-block;
+            border: 1px solid #111;
           }
           .download-btn:hover {
-            background: #5568d3;
-            transform: scale(1.05);
+            background: #fff;
+            color: #111;
+            border: 1px solid #111;
           }
           .footer {
             text-align: center;
             padding: 20px;
-            background: #f8f9fa;
-            color: #666;
+            background: #fff;
+            color: #222;
             font-size: 0.9em;
+            border-top: 1px solid #222;
           }
           .no-versions {
             text-align: center;
@@ -408,8 +419,8 @@ pages:
       <body>
         <div class="container">
           <div class="header">
-            <h1>📱 APK Downloads</h1>
-            <p>Download your app version</p>
+            <h1>APK Downloads</h1>
+            <p>Download your application version</p>
             <div class="stats">
               <div class="stat-item">
                 <div class="stat-number">TOTAL_VERSIONS_PLACEHOLDER</div>
@@ -443,7 +454,7 @@ pages:
               <li class="version-item latest">
                 <div class="version-info">
                   <div class="version-name">
-                    <span class="badge latest">🆕 LATEST</span>
+                    <span class="badge latest">LATEST</span>
                     app-${version}.apk
                   </div>
                   <div class="version-meta">Pipeline: #${CI_PIPELINE_IID} | Stored in Package Registry</div>
@@ -475,7 +486,7 @@ pages:
             </ul>
           </div>
           <div class="footer">
-            Built with GitLab CI/CD | 🚀 Automated Deployment
+            Built with GitLab CI/CD | Automated Deployment
           </div>
         </div>
       </body>
