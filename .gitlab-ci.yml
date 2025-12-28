@@ -1,16 +1,16 @@
-image: docker:latest                  # Use Docker image with Docker CLI pre-installed
+image: docker:latest
 
 services:
-  - docker:dind                      # Docker-in-Docker service to build Docker images
+  - docker:dind
 
 stages:
-  - infrastructure                  # Terraform provisioning
-  - configure_flutter               # Update Flutter app config
-  - build_flutter_android           # Build Flutter Android APK
-  - test                             # Run Flutter tests
-  - build_node                       # Build and push backend Docker image
-  - deploy                            # Deploy backend app
-  - publish_pages                     # Publish APK download page via GitLab Pages
+  - infrastructure
+  - configure_flutter
+  - build_flutter_android
+  - test
+  - build_node
+  - deploy
+  - publish_pages
 
 variables:
   DOCKER_HOST: tcp://docker:2375
@@ -28,13 +28,13 @@ terraform_apply:
     entrypoint: [""]
   variables:
     TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io
-  script:
-    - cd backend/terraform
-    - terraform init
-    - terraform apply -auto-approve
-    - terraform output -raw alb_dns_name > ../../alb_dns.txt
-    - terraform output -raw asg_name > ../../asg_name.txt
-    - terraform output -raw mongodb_connection_string > ../../mongo_uri.txt
+  script: |
+    cd backend/terraform
+    terraform init
+    terraform apply -auto-approve
+    terraform output -raw alb_dns_name > ../../alb_dns.txt
+    terraform output -raw asg_name > ../../asg_name.txt
+    terraform output -raw mongodb_connection_string > ../../mongo_uri.txt
   artifacts:
     paths:
       - alb_dns.txt
@@ -49,10 +49,10 @@ terraform_apply:
 update_flutter_config:
   stage: configure_flutter
   image: alpine:latest
-  script:
-    - apk add --no-cache curl bash
-    - export ALB_DNS=$(cat alb_dns.txt)
-    - sed -i "s|final url = .*|final url = 'http://$ALB_DNS/';|" frontend/lib/config.dart
+  script: |
+    apk add --no-cache curl bash
+    export ALB_DNS=$(cat alb_dns.txt)
+    sed -i "s|final url = .*|final url = 'http://$ALB_DNS/';|" frontend/lib/config.dart
   artifacts:
     paths:
       - frontend/lib/config.dart
@@ -76,21 +76,20 @@ build_flutter_apk:
       - frontend/.pub-cache/
       - frontend/build/
     policy: pull-push
-  before_script:
-    - apt-get update && apt-get install -y curl
-  script:
-    - cd frontend
-    - flutter pub get
-    - flutter build apk --release
-    - APK_VERSION="v${CI_PIPELINE_IID}"
-    - mv build/app/outputs/flutter-apk/app-release.apk ../app-$APK_VERSION.apk
-    - cd ..
-    - |
-      echo "Uploading APK to GitLab Package Registry..."
-      PACKAGE_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/apk-builds/${APK_VERSION}/app-${APK_VERSION}.apk"
-      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-           --upload-file "app-${APK_VERSION}.apk" \
-           "${PACKAGE_URL}"
+  before_script: |
+    apt-get update && apt-get install -y curl
+  script: |
+    cd frontend
+    flutter pub get
+    flutter build apk --release
+    APK_VERSION="v${CI_PIPELINE_IID}"
+    mv build/app/outputs/flutter-apk/app-release.apk ../app-$APK_VERSION.apk
+    cd ..
+    echo "Uploading APK to GitLab Package Registry..."
+    PACKAGE_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/apk-builds/${APK_VERSION}/app-${APK_VERSION}.apk"
+    curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+         --upload-file "app-${APK_VERSION}.apk" \
+         "${PACKAGE_URL}"
   artifacts:
     paths:
       - app-*.apk
@@ -109,10 +108,10 @@ flutter_test:
       - frontend/.dart_tool/
       - frontend/.pub-cache/
     policy: pull
-  script:
-    - cd frontend
-    - flutter pub get
-    - flutter test --coverage
+  script: |
+    cd frontend
+    flutter pub get
+    flutter test --coverage
   artifacts:
     paths:
       - frontend/coverage/lcov.info
@@ -124,15 +123,15 @@ flutter_test:
 #############################
 build_backend:
   stage: build_node
-  script:
-    - echo "Building backend image: $BACKEND_IMAGE:$IMAGE_TAG"
-    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
-    - docker build --pull -t $BACKEND_IMAGE:$IMAGE_TAG ./backend
-    - docker build -t $BACKEND_IMAGE:latest ./backend
-    - docker images
-    - docker push $BACKEND_IMAGE:$IMAGE_TAG
-    - docker push $BACKEND_IMAGE:latest
-    - echo "Successfully pushed $BACKEND_IMAGE:$IMAGE_TAG"
+  script: |
+    echo "Building backend image: $BACKEND_IMAGE:$IMAGE_TAG"
+    docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+    docker build --pull -t $BACKEND_IMAGE:$IMAGE_TAG ./backend
+    docker build -t $BACKEND_IMAGE:latest ./backend
+    docker images
+    docker push $BACKEND_IMAGE:$IMAGE_TAG
+    docker push $BACKEND_IMAGE:latest
+    echo "Successfully pushed $BACKEND_IMAGE:$IMAGE_TAG"
   only:
     - main
 
@@ -145,25 +144,25 @@ deploy_staging:
     SSH_HOST: "185.44.67.203"
     SSH_USER: "root"
     SSH_PORT: "51821"
-  before_script:
-    - apk add --no-cache openssh docker-cli
-    - mkdir -p ~/.ssh
-    - set +x
-    - echo "$SSH_VPS" > ~/.ssh/id_rsa
-    - chmod 600 ~/.ssh/id_rsa
-    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
-    - set -x
-    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
-    - export MONGODB_URI=$(cat mongo_uri.txt)
-  script:
-    - scp -P $SSH_PORT backend/docker-compose.staging.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
-    - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
-        export IMAGE_TAG=$IMAGE_TAG &&
-        export MONGODB_URI='$MONGODB_URI' &&
-        docker compose -f /root/docker-compose.yml down &&
-        docker compose -f /root/docker-compose.yml pull &&
-        docker compose -f /root/docker-compose.yml up -d
-      "
+  before_script: |
+    apk add --no-cache openssh docker-cli
+    mkdir -p ~/.ssh
+    set +x
+    echo "$SSH_VPS" > ~/.ssh/id_rsa
+    chmod 600 ~/.ssh/id_rsa
+    docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+    set -x
+    echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+    export MONGODB_URI=$(cat mongo_uri.txt)
+  script: |
+    scp -P $SSH_PORT backend/docker-compose.staging.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
+    ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
+      export IMAGE_TAG=$IMAGE_TAG &&
+      export MONGODB_URI='$MONGODB_URI' &&
+      docker compose -f /root/docker-compose.yml down &&
+      docker compose -f /root/docker-compose.yml pull &&
+      docker compose -f /root/docker-compose.yml up -d
+    "
   dependencies:
     - terraform_apply
     - build_backend
@@ -184,44 +183,43 @@ deploy_app:
     AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
     AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
     AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
-  before_script:
-    - yum install -y jq || true
-    - export ASG_NAME=$(cat asg_name.txt)
-    - export MONGODB_URI=$(cat mongo_uri.txt)
-  script:
-    - |
-      echo "Starting ASG instance refresh for $ASG_NAME..."
-      aws autoscaling start-instance-refresh \
+  before_script: |
+    yum install -y jq || true
+    export ASG_NAME=$(cat asg_name.txt)
+    export MONGODB_URI=$(cat mongo_uri.txt)
+  script: |
+    echo "Starting ASG instance refresh for $ASG_NAME..."
+    aws autoscaling start-instance-refresh \
+      --auto-scaling-group-name "$ASG_NAME" \
+      --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 120}' \
+      --strategy Rolling
+
+    echo "Waiting for instance refresh to complete (timeout: 10 min)..."
+    TIMEOUT=600
+    ELAPSED=0
+    while [ $ELAPSED -lt $TIMEOUT ]; do
+      STATUS=$(aws autoscaling describe-instance-refreshes \
         --auto-scaling-group-name "$ASG_NAME" \
-        --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 120}' \
-        --strategy Rolling
-    - |
-      echo "Waiting for instance refresh to complete (timeout: 10 min)..."
-      TIMEOUT=600
-      ELAPSED=0
-      while [ $ELAPSED -lt $TIMEOUT ]; do
-        STATUS=$(aws autoscaling describe-instance-refreshes \
+        --query 'InstanceRefreshes[0].Status' \
+        --output text)
+      echo "[$ELAPSED s] Current status: $STATUS"
+      if [ "$STATUS" = "Successful" ]; then
+        echo "Instance refresh completed successfully!"
+        exit 0
+      elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+        echo "Instance refresh failed!"
+        aws autoscaling describe-instance-refreshes \
           --auto-scaling-group-name "$ASG_NAME" \
-          --query 'InstanceRefreshes[0].Status' \
-          --output text)
-        echo "[$ELAPSED s] Current status: $STATUS"
-        if [ "$STATUS" = "Successful" ]; then
-          echo "Instance refresh completed successfully!"
-          exit 0
-        elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
-          echo "Instance refresh failed!"
-          aws autoscaling describe-instance-refreshes \
-            --auto-scaling-group-name "$ASG_NAME" \
-            --query 'InstanceRefreshes[0].StatusReason' \
-            --output text
-          exit 1
-        fi
-        sleep 20
-        ELAPSED=$((ELAPSED + 20))
-      done
-      echo "Timeout reached! Cancelling instance refresh..."
-      aws autoscaling cancel-instance-refresh --auto-scaling-group-name "$ASG_NAME" || true
-      exit 1
+          --query 'InstanceRefreshes[0].StatusReason' \
+          --output text
+        exit 1
+      fi
+      sleep 20
+      ELAPSED=$((ELAPSED + 20))
+    done
+    echo "Timeout reached! Cancelling instance refresh..."
+    aws autoscaling cancel-instance-refresh --auto-scaling-group-name "$ASG_NAME" || true
+    exit 1
   dependencies:
     - terraform_apply
     - build_backend
@@ -242,49 +240,49 @@ deploy_app:
 pages:
   stage: publish_pages
   image: alpine:latest
-  before_script:
-    - apk add --no-cache curl jq
-  script:
-    - mkdir -p public
-    - |
-      echo "Fetching all APK versions from GitLab Package Registry..."
-      PACKAGES=$(curl --silent --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages?per_page=100" | \
-        jq -r '.[] | select(.name == "apk-builds") | .version' | sort -V -r)
-      echo "$PACKAGES" > versions.txt
-      export TOTAL_VERSIONS=$(cat versions.txt | wc -l)
-    - |
-      cat > public/index.html << 'EOF'
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>APK Downloads</title>
-      <style>/* Styles omitted for brevity; use your CSS */</style>
-      </head>
-      <body>
-      <div class="container">
-      <div class="header"><h1>APK Downloads</h1></div>
-      <div class="content"><ul class="version-list">
-      EOF
-    - |
-      FIRST=true
-      if [ -s versions.txt ]; then
-        while IFS= read -r version; do
-          [ -z "$version" ] && continue
-          DOWNLOAD_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/apk-builds/${version}/app-${version}.apk"
-          if [ "$FIRST" = true ]; then
-            echo "<li class='version-item latest'>app-${version}.apk</li>" >> public/index.html
-            FIRST=false
-          else
-            echo "<li class='version-item'>app-${version}.apk</li>" >> public/index.html
-          fi
-        done < versions.txt
-      else
-        echo '<li class="no-versions">No versions available yet.</li>' >> public/index.html
-      fi
-    - echo "</ul></div></body></html>" >> public/index.html
+  before_script: |
+    apk add --no-cache curl jq
+  script: |
+    mkdir -p public
+    echo "Fetching all APK versions from GitLab Package Registry..."
+    PACKAGES=$(curl --silent --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+      "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages?per_page=100" | \
+      jq -r '.[] | select(.name == "apk-builds") | .version' | sort -V -r)
+    echo "$PACKAGES" > versions.txt
+    export TOTAL_VERSIONS=$(cat versions.txt | wc -l)
+
+    cat > public/index.html << 'EOF'
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APK Downloads</title>
+    <style>/* Styles omitted for brevity */</style>
+    </head>
+    <body>
+    <div class="container">
+    <div class="header"><h1>APK Downloads</h1></div>
+    <div class="content"><ul class="version-list">
+    EOF
+
+    FIRST=true
+    if [ -s versions.txt ]; then
+      while IFS= read -r version; do
+        [ -z "$version" ] && continue
+        DOWNLOAD_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/apk-builds/${version}/app-${version}.apk"
+        if [ "$FIRST" = true ]; then
+          echo "<li class='version-item latest'><a href='$DOWNLOAD_URL'>app-${version}.apk</a></li>" >> public/index.html
+          FIRST=false
+        else
+          echo "<li class='version-item'><a href='$DOWNLOAD_URL'>app-${version}.apk</a></li>" >> public/index.html
+        fi
+      done < versions.txt
+    else
+      echo '<li class="no-versions">No versions available yet.</li>' >> public/index.html
+    fi
+
+    echo "</ul></div></body></html>" >> public/index.html
   artifacts:
     paths:
       - public
