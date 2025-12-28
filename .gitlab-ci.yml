@@ -116,11 +116,14 @@ flutter_test:
 build_backend:
   stage: build_node
   script:
+    - echo "Building backend image: $BACKEND_IMAGE:$IMAGE_TAG"
     - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"  # Log in to Docker registry
     - docker build -t $BACKEND_IMAGE:$IMAGE_TAG ./backend  # Build with version tag
     - docker build -t $BACKEND_IMAGE:latest ./backend      # Also tag as latest
-#     - docker push $BACKEND_IMAGE:$IMAGE_TAG                         # Push versioned image
-#     - docker push $BACKEND_IMAGE:latest                             # Push latest tag
+    - docker images  # List images to verify build
+    - docker push $BACKEND_IMAGE:$IMAGE_TAG                         # Push versioned image
+    - docker push $BACKEND_IMAGE:latest                             # Push latest tag
+    - echo "Successfully pushed $BACKEND_IMAGE:$IMAGE_TAG"
 #   only:
 #     - main
 
