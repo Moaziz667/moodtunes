@@ -20,5 +20,10 @@ app.use(bodyParser.json()); // Use body-parser middleware for JSON requests
 app.use('/', UserRouter); // Use your user routes
 app.use("/",TaskRouter);
 
+// Health check endpoint for ALB
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', message: 'Server is healthy' });
+});
+
 
 module.exports = app; // Export the app for use in your server file
