@@ -160,6 +160,7 @@ deploy_staging:
 
   dependencies:
     - terraform_apply  # Need mongo_uri.txt artifact
+    - build_backend    # Need Docker image to be built and pushed
 
   only:
     - main  # Run this job only on the main branch
