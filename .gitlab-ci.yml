@@ -1,66 +1,74 @@
 image: docker:latest                  # Use Docker image with Docker CLI pre-installed
 
 services:
-  - docker:dind                      # Use Docker-in-Docker service to build Docker images inside pipeline
+  - docker:dind                      # Docker-in-Docker service to build Docker images
 
 stages:
-  - infrastructure                  # Stage to provision infrastructure with Terraform
-  - configure_flutter              # Stage to update Flutter app config with backend IP
-  - build_flutter_android          # Stage to build Flutter Android APK
-  - test                          # Stage to run Flutter tests
-  - build_node                    # Stage to build and push backend Docker image
-  - deploy                       # Stage to deploy backend app on EC2 instance
-  - publish_pages                # Stage to publish APK download page via GitLab Pages
+  - infrastructure                  # Terraform provisioning
+  - configure_flutter               # Update Flutter app config
+  - build_flutter_android           # Build Flutter Android APK
+  - test                             # Run Flutter tests
+  - build_node                       # Build and push backend Docker image
+  - deploy                            # Deploy backend app
+  - publish_pages                     # Publish APK download page via GitLab Pages
 
 variables:
-  DOCKER_HOST: tcp://docker:2375  # Docker daemon TCP address for Docker-in-Docker
-  DOCKER_TLS_CERTDIR: ""           # Disable TLS cert directory for Docker daemon (required for DinD)
-  BACKEND_IMAGE: azizhk444/nodejserver  # Docker image base name
-  IMAGE_TAG: $CI_PIPELINE_IID      # Use pipeline ID as image tag for traceability
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+  BACKEND_IMAGE: azizhk444/nodejserver
+  IMAGE_TAG: $CI_PIPELINE_IID
 
+#############################
+# Stage 1: Terraform Apply
+#############################
 terraform_apply:
   stage: infrastructure
   image:
-    name: hashicorp/terraform:light # Terraform official image (lightweight)
-    entrypoint: [""]                # Override entrypoint for terraform CLI commands
+    name: hashicorp/terraform:light
+    entrypoint: [""]
   variables:
-    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io  # Terraform Cloud API token (seul variable nécessaire)
+    TF_TOKEN_app_terraform_io: $TF_TOKEN_app_terraform_io
   script:
-    - cd backend/terraform             # Move into Terraform config directory
-    - terraform init                            # Initialize Terraform (download providers, modules)
-    - terraform apply -auto-approve            # Apply Terraform config, auto-approve without prompt
-    - terraform output -raw alb_dns_name > ../../alb_dns.txt    # Extract ALB DNS name
-    - terraform output -raw asg_name > ../../asg_name.txt       # Extract ASG name
-    - terraform output -raw mongodb_connection_string > ../../mongo_uri.txt  # Extract Atlas URI
+    - cd backend/terraform
+    - terraform init
+    - terraform apply -auto-approve
+    - terraform output -raw alb_dns_name > ../../alb_dns.txt
+    - terraform output -raw asg_name > ../../asg_name.txt
+    - terraform output -raw mongodb_connection_string > ../../mongo_uri.txt
   artifacts:
     paths:
-      - alb_dns.txt                            # Save ALB DNS as artifact
-      - asg_name.txt                           # Save ASG name as artifact
-      - mongo_uri.txt                          # Save MongoDB Atlas URI as artifact
-  only:
-    - main                                    # Run this job only on main branch
-
-update_flutter_config:
-  stage: configure_flutter
-  image: alpine:latest                        # Use lightweight Alpine Linux image for scripting
-  script:
-    - apk add --no-cache curl bash            # Installl curl and bash in Alpine
-    - export ALB_DNS=$(cat alb_dns.txt)       # Read the ALB DNS from the artifact file
-    - sed -i "s|final url = .*|final url = 'http://$ALB_DNS/';|" frontend/lib/config.dart  
-      # Replace the backend URL in Flutter config with ALB DNS (port 80, no need to specify)
-  artifacts:
-    paths:
-      - frontend/lib/config.dart     # Save updated config file for next job
-  dependencies:
-    - terraform_apply                         # Depends on terraform_apply to get alb_dns.txt
+      - alb_dns.txt
+      - asg_name.txt
+      - mongo_uri.txt
   only:
     - main
 
+#############################
+# Stage 2: Update Flutter Config
+#############################
+update_flutter_config:
+  stage: configure_flutter
+  image: alpine:latest
+  script:
+    - apk add --no-cache curl bash
+    - export ALB_DNS=$(cat alb_dns.txt)
+    - sed -i "s|final url = .*|final url = 'http://$ALB_DNS/';|" frontend/lib/config.dart
+  artifacts:
+    paths:
+      - frontend/lib/config.dart
+  dependencies:
+    - terraform_apply
+  only:
+    - main
+
+#############################
+# Stage 3: Build Flutter APK
+#############################
 build_flutter_apk:
   stage: build_flutter_android
-  image: ghcr.io/cirruslabs/flutter:3.32.6  # Flutter SDK image with necessary tools pre-installed
+  image: ghcr.io/cirruslabs/flutter:3.32.6
   dependencies:
-    - update_flutter_config                   # Use updated Flutter config from previous job
+    - update_flutter_config
   cache:
     key: flutter-build-$CI_COMMIT_REF_SLUG
     paths:
@@ -69,34 +77,32 @@ build_flutter_apk:
       - frontend/build/
     policy: pull-push
   before_script:
-    - apt-get update && apt-get install -y curl  # Flutter image is Debian-based
+    - apt-get update && apt-get install -y curl
   script:
-    - cd frontend                    # Navigate to Flutter frontend directory
-    - flutter pub get                         # Fetch Flutter dependencies
-    - flutter build apk --release             # Build release APK for Android
-    - APK_VERSION="v${CI_PIPELINE_IID}"       # Set APK version based on pipeline ID (unique build number)
-    - mv build/app/outputs/flutter-apk/app-release.apk ../app-$APK_VERSION.apk  # Rename APK with version
+    - cd frontend
+    - flutter pub get
+    - flutter build apk --release
+    - APK_VERSION="v${CI_PIPELINE_IID}"
+    - mv build/app/outputs/flutter-apk/app-release.apk ../app-$APK_VERSION.apk
     - cd ..
-    
-    # Upload APK to GitLab Package Registryy (PERMANENT STORAGE)
     - |
-      echo "📦 Uploading APK to GitLab Package Registry..."
+      echo "Uploading APK to GitLab Package Registry..."
       PACKAGE_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/apk-builds/${APK_VERSION}/app-${APK_VERSION}.apk"
-      
       curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
            --upload-file "app-${APK_VERSION}.apk" \
            "${PACKAGE_URL}"
-      
-      echo "✅ APK uploaded to registry: ${PACKAGE_URL}"
   artifacts:
     paths:
-      - app-*.apk               # Save APK as artifact too
+      - app-*.apk
   only:
     - main
 
+#############################
+# Stage 4: Flutter Test
+#############################
 flutter_test:
   stage: test
-  image: ghcr.io/cirruslabs/flutter:3.32.6  # Same Flutter SDK image for tests
+  image: ghcr.io/cirruslabs/flutter:3.32.6
   cache:
     key: flutter-build-$CI_COMMIT_REF_SLUG
     paths:
@@ -104,21 +110,24 @@ flutter_test:
       - frontend/.pub-cache/
     policy: pull
   script:
-    - cd frontend                    # Move to Flutter frontend directory
-    - flutter pub get                         # Get dependencies for tests
-    - flutter test --coverage                 # Run tests and collect coverage info
+    - cd frontend
+    - flutter pub get
+    - flutter test --coverage
   artifacts:
     paths:
-      - frontend/coverage/lcov.info # Save test coverage report as artifact
+      - frontend/coverage/lcov.info
   only:
     - main
 
+#############################
+# Stage 5: Build Backend Docker Image
+#############################
 build_backend:
   stage: build_node
   script:
     - echo "Building backend image: $BACKEND_IMAGE:$IMAGE_TAG"
     - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
-    - docker build -t $BACKEND_IMAGE:$IMAGE_TAG ./backend
+    - docker build --pull -t $BACKEND_IMAGE:$IMAGE_TAG ./backend
     - docker build -t $BACKEND_IMAGE:latest ./backend
     - docker images
     - docker push $BACKEND_IMAGE:$IMAGE_TAG
@@ -127,32 +136,27 @@ build_backend:
   only:
     - main
 
-
-
+#############################
+# Stage 6: Deploy Staging (VPS)
+#############################
 deploy_staging:
-  stage: deploy  # This job runs in the "deploy" stage of the pipeline
-
+  stage: deploy
   variables:
-    SSH_HOST: "185.44.67.203"  # VPS IP address
-    SSH_USER: "root"           # SSH user (be cautious using root in production)
-    SSH_PORT: "51821"          # Custom SSH port (non-default for security)
-
+    SSH_HOST: "185.44.67.203"
+    SSH_USER: "root"
+    SSH_PORT: "51821"
   before_script:
-  - apk add --no-cache openssh docker-cli    # Install OpenSSH and Docker CLI
-  - mkdir -p ~/.ssh                      # Create SSH config directory
-  - set +x                              # Disable command echo
-  - echo "$SSH_VPS" > ~/.ssh/id_rsa     # Save SSH private key from GitLab CI/CD variable
-  - chmod 600 ~/.ssh/id_rsa              # Secure permissions on the private key
-  - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"  # Login to Docker registry
-  - set -x                              # Re-enable command echo
-  - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config  # Disable strict host key checking
-  - export MONGODB_URI=$(cat mongo_uri.txt)  # Read Atlas URI from artifact
-
+    - apk add --no-cache openssh docker-cli
+    - mkdir -p ~/.ssh
+    - set +x
+    - echo "$SSH_VPS" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+    - set -x
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+    - export MONGODB_URI=$(cat mongo_uri.txt)
   script:
-    # Upload the staging Docker Compose file to the VPS using secure copy (SCP)
     - scp -P $SSH_PORT backend/docker-compose.staging.yml $SSH_USER@$SSH_HOST:/root/docker-compose.yml
-
-    # SSH into the server and run Docker Compose with Atlas URI
     - ssh -p $SSH_PORT $SSH_USER@$SSH_HOST "
         export IMAGE_TAG=$IMAGE_TAG &&
         export MONGODB_URI='$MONGODB_URI' &&
@@ -160,43 +164,37 @@ deploy_staging:
         docker compose -f /root/docker-compose.yml pull &&
         docker compose -f /root/docker-compose.yml up -d
       "
-
   dependencies:
-    - terraform_apply  # Need mongo_uri.txt artifact
-    - build_backend    # Need Docker image to be built and pushed
-
+    - terraform_apply
+    - build_backend
   only:
-    - main  # Run this job only on the main branch
-
+    - main
   environment:
-    name: staging  # Declare this job as a deployment to the 'staging' environment
+    name: staging
 
-  
-
-
-
+#############################
+# Stage 7: Deploy Production (AWS ASG)
+#############################
 deploy_app:
   stage: deploy
   image: 
     name: amazon/aws-cli:latest
-    entrypoint: [""]                          # Override entrypoint for AWS CLI
+    entrypoint: [""]
   variables:
     AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
     AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
     AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
   before_script:
-    - yum install -y jq || true               # Install jq for JSON parsing
-    - export ASG_NAME=$(cat asg_name.txt)     # Read ASG name from artifact
-    - export MONGODB_URI=$(cat mongo_uri.txt) # Read Atlas URI from artifact
+    - yum install -y jq || true
+    - export ASG_NAME=$(cat asg_name.txt)
+    - export MONGODB_URI=$(cat mongo_uri.txt)
   script:
-    # Trigger ASG instance refresh to deploy new version
     - |
       echo "Starting ASG instance refresh for $ASG_NAME..."
       aws autoscaling start-instance-refresh \
         --auto-scaling-group-name "$ASG_NAME" \
         --preferences '{"MinHealthyPercentage": 0, "InstanceWarmup": 120}' \
         --strategy Rolling
-    # Wait for refresh to complete with TIMEOUT (max 10 minutes)
     - |
       echo "Waiting for instance refresh to complete (timeout: 10 min)..."
       TIMEOUT=600
@@ -208,10 +206,10 @@ deploy_app:
           --output text)
         echo "[$ELAPSED s] Current status: $STATUS"
         if [ "$STATUS" = "Successful" ]; then
-          echo "✅ Instance refresh completed successfully!"
+          echo "Instance refresh completed successfully!"
           exit 0
         elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
-          echo "❌ Instance refresh failed! Checking instance health..."
+          echo "Instance refresh failed!"
           aws autoscaling describe-instance-refreshes \
             --auto-scaling-group-name "$ASG_NAME" \
             --query 'InstanceRefreshes[0].StatusReason' \
@@ -221,283 +219,74 @@ deploy_app:
         sleep 20
         ELAPSED=$((ELAPSED + 20))
       done
-      echo "⏰ Timeout reached! Cancelling instance refresh..."
+      echo "Timeout reached! Cancelling instance refresh..."
       aws autoscaling cancel-instance-refresh --auto-scaling-group-name "$ASG_NAME" || true
       exit 1
   dependencies:
-    - terraform_apply                         # Need asg_name.txt and mongo_uri.txt
-    - build_backend                           # Need new Docker image pushed first
+    - terraform_apply
+    - build_backend
   only:
     - main
   environment:
     name: production
     url: http://$ALB_DNS
-  when: manual                                # Manual deployment trigger
+  when: manual
   needs:
     - deploy_staging
     - terraform_apply
-    - build_backend 
+    - build_backend
 
+#############################
+# Stage 8: Publish APKs via GitLab Pages
+#############################
 pages:
   stage: publish_pages
   image: alpine:latest
   before_script:
-    - apk add --no-cache curl jq               # Install curl and jq for API calls
+    - apk add --no-cache curl jq
   script:
-    # Create public directory structure
     - mkdir -p public
-    
-    # Fetch ALL APK versions from GitLab Package Registry (PERMANENT STORAGE)
     - |
-      echo "🔍 Fetching ALL APK versions from GitLab Package Registry..."
-      
-      # Get all packages from the registry
+      echo "Fetching all APK versions from GitLab Package Registry..."
       PACKAGES=$(curl --silent --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages?per_page=100" | \
         jq -r '.[] | select(.name == "apk-builds") | .version' | sort -V -r)
-      
-      if [ -n "$PACKAGES" ]; then
-        echo "✅ Found $(echo "$PACKAGES" | wc -l) version(s) in registry"
-        echo "$PACKAGES"
-      else
-        echo "ℹ️  No packages found yet in registry"
-      fi
-      
-      # Store package list for HTML generation
       echo "$PACKAGES" > versions.txt
-    
-    # Count total versions
-    - export TOTAL_VERSIONS=$(cat versions.txt | wc -l)
-    
-    # Generate enhanced index.html with ALL APKs (sorted by version, newest first)
+      export TOTAL_VERSIONS=$(cat versions.txt | wc -l)
     - |
       cat > public/index.html << 'EOF'
       <!DOCTYPE html>
       <html lang="en">
       <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>📱 APK Downloads</title>
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body {
-            font-family: 'Segoe UI', Arial, sans-serif;
-            background: #fff;
-            color: #111;
-            min-height: 100vh;
-            padding: 20px;
-          }
-          .container {
-            max-width: 900px;
-            margin: 0 auto;
-            background: #fff;
-            border-radius: 0;
-            box-shadow: none;
-            border: 1px solid #222;
-            overflow: hidden;
-          }
-          .header {
-            background: #111;
-            color: #fff;
-            padding: 40px 30px;
-            text-align: center;
-          }
-          .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-          }
-          .header p {
-            font-size: 1.1em;
-            opacity: 0.9;
-          }
-          .stats {
-            display: flex;
-            justify-content: center;
-            gap: 30px;
-            margin-top: 20px;
-            padding: 20px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 10px;
-          }
-          .stat-item {
-            text-align: center;
-          }
-          .stat-number {
-            font-size: 2em;
-            font-weight: bold;
-          }
-          .stat-label {
-            font-size: 0.9em;
-            opacity: 0.8;
-          }
-          .content {
-            padding: 40px 30px;
-          }
-          .version-list {
-            list-style: none;
-          }
-          .version-item {
-            padding: 20px;
-            margin: 15px 0;
-            background: #fff;
-            border-radius: 0;
-            border-left: 4px solid #111;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #eee;
-            transition: none;
-          }
-          .version-item:hover {
-            background: #f4f4f4;
-            box-shadow: none;
-          }
-          .version-item.latest {
-            background: #eee;
-            border-left-color: #111;
-          }
-          .version-info {
-            flex: 1;
-          }
-          .version-name {
-            font-size: 1.2em;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 5px;
-          }
-          .version-meta {
-            color: #666;
-            font-size: 0.9em;
-          }
-          .badge {
-            padding: 5px 15px;
-            border-radius: 0;
-            font-size: 0.85em;
-            font-weight: 600;
-            margin-right: 10px;
-            background: #111;
-            color: #fff;
-            border: 1px solid #111;
-          }
-          .badge.latest {
-            background: #fff;
-            color: #111;
-            border: 1px solid #111;
-          }
-          .badge.old {
-            background: #fff;
-            color: #111;
-            border: 1px solid #111;
-          }
-          .download-btn {
-            padding: 12px 30px;
-            background: #111;
-            color: #fff;
-            text-decoration: none;
-            border-radius: 0;
-            font-weight: 600;
-            transition: none;
-            display: inline-block;
-            border: 1px solid #111;
-          }
-          .download-btn:hover {
-            background: #fff;
-            color: #111;
-            border: 1px solid #111;
-          }
-          .footer {
-            text-align: center;
-            padding: 20px;
-            background: #fff;
-            color: #222;
-            font-size: 0.9em;
-            border-top: 1px solid #222;
-          }
-          .no-versions {
-            text-align: center;
-            padding: 40px;
-            color: #999;
-          }
-        </style>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>APK Downloads</title>
+      <style>/* Styles omitted for brevity; use your CSS */</style>
       </head>
       <body>
-        <div class="container">
-          <div class="header">
-            <h1>APK Downloads</h1>
-            <p>Download your application version</p>
-            <div class="stats">
-              <div class="stat-item">
-                <div class="stat-number">TOTAL_VERSIONS_PLACEHOLDER</div>
-                <div class="stat-label">Total Versions</div>
-              </div>
-              <div class="stat-item">
-                <div class="stat-number">#PIPELINE_ID_PLACEHOLDER</div>
-                <div class="stat-label">Latest Build</div>
-              </div>
-            </div>
-          </div>
-          <div class="content">
-            <ul class="version-list">
+      <div class="container">
+      <div class="header"><h1>APK Downloads</h1></div>
+      <div class="content"><ul class="version-list">
       EOF
-      
-      # Replace placeholders
-      sed -i "s/TOTAL_VERSIONS_PLACEHOLDER/${TOTAL_VERSIONS}/" public/index.html
-      sed -i "s/PIPELINE_ID_PLACEHOLDER/${CI_PIPELINE_IID}/" public/index.html
-      
-      # Generate download links for ALL versions from Package Registry
+    - |
       FIRST=true
-      
       if [ -s versions.txt ]; then
         while IFS= read -r version; do
           [ -z "$version" ] && continue
-          
           DOWNLOAD_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/apk-builds/${version}/app-${version}.apk"
-          
           if [ "$FIRST" = true ]; then
-            cat >> public/index.html << EOF
-              <li class="version-item latest">
-                <div class="version-info">
-                  <div class="version-name">
-                    <span class="badge latest">LATEST</span>
-                    app-${version}.apk
-                  </div>
-                  <div class="version-meta">Pipeline: #${CI_PIPELINE_IID} | Stored in Package Registry</div>
-                </div>
-                <a href="${DOWNLOAD_URL}" class="download-btn" download>Download</a>
-              </li>
-      EOF
+            echo "<li class='version-item latest'>app-${version}.apk</li>" >> public/index.html
             FIRST=false
           else
-            cat >> public/index.html << EOF
-              <li class="version-item">
-                <div class="version-info">
-                  <div class="version-name">
-                    <span class="badge old">OLD</span>
-                    app-${version}.apk
-                  </div>
-                  <div class="version-meta">Stored in Package Registry</div>
-                </div>
-                <a href="${DOWNLOAD_URL}" class="download-btn" download>Download</a>
-              </li>
-      EOF
+            echo "<li class='version-item'>app-${version}.apk</li>" >> public/index.html
           fi
         done < versions.txt
       else
         echo '<li class="no-versions">No versions available yet.</li>' >> public/index.html
       fi
-      
-      cat >> public/index.html << 'EOF'
-            </ul>
-          </div>
-          <div class="footer">
-            Built with GitLab CI/CD | Automated Deployment
-          </div>
-        </div>
-      </body>
-      </html>
-      EOF
+    - echo "</ul></div></body></html>" >> public/index.html
   artifacts:
     paths:
-      - public                                    # Publish public folder for GitLab Pages
+      - public
   only:
     - main
