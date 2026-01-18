@@ -4,7 +4,7 @@ const db = require('./config/db')
 const port = 3000;
 
 app.get('/',(req,res)=>{
-    res.send("hey zaid, how are you?")
+    res.send("hey aziz, how are you?")
 });
 
 app.listen(port, () => {
