@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 600" width="980" height="600" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#8b949e"/>
+    </marker>
+    <marker id="arrowG" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#1DB954"/>
+    </marker>
+  </defs>
+
+  <rect width="980" height="600" fill="#ffffff"/>
+
+  <text x="28" y="38" font-size="20" font-weight="600" fill="#24292f">MoodTunes — delivery pipeline and runtime</text>
+  <text x="28" y="58" font-size="12.5" fill="#57606a">Terraform provisions the infrastructure, then the pipeline feeds the live load balancer address back into the mobile build.</text>
+
+  <rect x="28" y="86" width="268" height="476" rx="8" fill="#fdf5ef" stroke="#e9b384" stroke-width="1.4"/>
+  <text x="44" y="110" font-size="13" font-weight="600" fill="#9a5b2b">GitLab CI/CD</text>
+
+  <rect x="44" y="124" width="236" height="46" rx="6" fill="#ffffff" stroke="#e0c3a8"/>
+  <text x="58" y="144" font-size="12.5" font-weight="600" fill="#24292f">1 · infrastructure</text>
+  <text x="58" y="161" font-size="11.5" fill="#57606a">terraform apply → outputs</text>
+
+  <rect x="44" y="182" width="236" height="46" rx="6" fill="#ffffff" stroke="#e0c3a8"/>
+  <text x="58" y="202" font-size="12.5" font-weight="600" fill="#24292f">2 · flutter config</text>
+  <text x="58" y="219" font-size="11.5" fill="#57606a">inject ALB DNS into the app</text>
+
+  <rect x="44" y="240" width="236" height="46" rx="6" fill="#ffffff" stroke="#e0c3a8"/>
+  <text x="58" y="260" font-size="12.5" font-weight="600" fill="#24292f">3 · mobile build + test</text>
+  <text x="58" y="277" font-size="11.5" fill="#57606a">APK → Package Registry</text>
+
+  <rect x="44" y="298" width="236" height="46" rx="6" fill="#ffffff" stroke="#e0c3a8"/>
+  <text x="58" y="318" font-size="12.5" font-weight="600" fill="#24292f">4 · backend image</text>
+  <text x="58" y="335" font-size="11.5" fill="#57606a">docker build → registry</text>
+
+  <rect x="44" y="356" width="236" height="46" rx="6" fill="#ffffff" stroke="#e0c3a8"/>
+  <text x="58" y="376" font-size="12.5" font-weight="600" fill="#24292f">5 · staging</text>
+  <text x="58" y="393" font-size="11.5" fill="#57606a">compose over SSH → VPS</text>
+
+  <rect x="44" y="414" width="236" height="52" rx="6" fill="#ffffff" stroke="#1DB954" stroke-width="1.6"/>
+  <text x="58" y="434" font-size="12.5" font-weight="600" fill="#24292f">6 · production  (manual gate)</text>
+  <text x="58" y="451" font-size="11.5" fill="#57606a">ASG instance refresh, polled</text>
+
+  <rect x="44" y="478" width="236" height="46" rx="6" fill="#ffffff" stroke="#e0c3a8"/>
+  <text x="58" y="498" font-size="12.5" font-weight="600" fill="#24292f">7 · pages</text>
+  <text x="58" y="515" font-size="11.5" fill="#57606a">versioned APK download index</text>
+
+  <path d="M162,170 L162,180" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M162,228 L162,238" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M162,286 L162,296" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M162,344 L162,354" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M162,402 L162,412" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M162,466 L162,476" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arrow)"/>
+
+  <rect x="344" y="86" width="400" height="368" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1.4"/>
+  <text x="362" y="110" font-size="13" font-weight="600" fill="#24292f">AWS — VPC, two subnets</text>
+
+  <rect x="362" y="126" width="364" height="52" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="378" y="147" font-size="12.5" font-weight="600" fill="#24292f">Application Load Balancer</text>
+  <text x="378" y="164" font-size="11.5" fill="#57606a">target group · ELB health checks</text>
+
+  <rect x="362" y="200" width="364" height="112" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="378" y="221" font-size="12.5" font-weight="600" fill="#24292f">Auto Scaling Group</text>
+  <text x="378" y="239" font-size="11.5" fill="#57606a">launch template · 180s grace · $Latest</text>
+  <rect x="378" y="250" width="100" height="44" rx="5" fill="#eef6ff" stroke="#9ec5f0"/>
+  <text x="396" y="277" font-size="11.5" fill="#24292f">Node.js</text>
+  <rect x="490" y="250" width="100" height="44" rx="5" fill="#eef6ff" stroke="#9ec5f0"/>
+  <text x="508" y="277" font-size="11.5" fill="#24292f">Node.js</text>
+  <rect x="602" y="250" width="108" height="44" rx="5" fill="#f6f8fa" stroke="#d0d7de" stroke-dasharray="4 3"/>
+  <text x="624" y="277" font-size="11.5" fill="#8b949e">scale out</text>
+
+  <rect x="362" y="334" width="364" height="52" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="378" y="355" font-size="12.5" font-weight="600" fill="#24292f">CloudWatch alarms</text>
+  <text x="378" y="372" font-size="11.5" fill="#57606a">CPU ≥ 70% scale up · ≤ 30% scale down</text>
+
+  <rect x="362" y="404" width="364" height="34" rx="6" fill="#fff8e6" stroke="#e3c14e"/>
+  <text x="378" y="426" font-size="11.5" fill="#6b5a1a">all of the above declared in backend/terraform</text>
+
+  <path d="M544,178 L544,198" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <path d="M544,312 L544,332" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arrow)"/>
+
+  <rect x="792" y="200" width="160" height="112" rx="8" fill="#eefaf1" stroke="#1DB954" stroke-width="1.4"/>
+  <text x="810" y="224" font-size="12.5" font-weight="600" fill="#176b36">MongoDB Atlas</text>
+  <text x="810" y="243" font-size="11.5" fill="#3a7a52">project · cluster</text>
+  <text x="810" y="260" font-size="11.5" fill="#3a7a52">database user</text>
+  <text x="810" y="277" font-size="11.5" fill="#3a7a52">IP access list</text>
+  <text x="810" y="298" font-size="10.5" fill="#57606a">mongodbatlas provider</text>
+  <path d="M726,256 L790,256" stroke="#1DB954" stroke-width="1.5" marker-end="url(#arrowG)"/>
+
+  <rect x="792" y="86" width="160" height="80" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="810" y="110" font-size="12.5" font-weight="600" fill="#24292f">Flutter client</text>
+  <text x="810" y="128" font-size="11.5" fill="#57606a">Android · iOS · Web</text>
+  <text x="810" y="147" font-size="11.5" fill="#57606a">JWT bearer</text>
+  <path d="M792,140 L730,146" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arrow)"/>
+
+  <path d="M280,146 C316,146 320,150 342,150" stroke="#8b949e" stroke-width="1.4" fill="none" marker-end="url(#arrow)"/>
+  <path d="M280,440 C312,440 318,300 342,268" stroke="#1DB954" stroke-width="1.5" fill="none" marker-end="url(#arrowG)"/>
+
+  <path d="M344,166 C320,176 300,186 282,196" stroke="#8b949e" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text x="352" y="188" font-size="10.5" fill="#57606a">ALB DNS fed back to step 2</text>
+
+  <rect x="344" y="478" width="400" height="46" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-dasharray="5 3"/>
+  <text x="362" y="498" font-size="12.5" font-weight="600" fill="#24292f">Staging VPS</text>
+  <text x="362" y="515" font-size="11.5" fill="#57606a">docker compose over SSH, separate from the AWS path</text>
+  <path d="M280,398 C310,398 318,498 342,500" stroke="#8b949e" stroke-width="1.4" fill="none" marker-end="url(#arrow)"/>
+</svg>

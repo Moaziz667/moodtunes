@@ -2,6 +2,13 @@
 
 A full-stack Flutter + Node.js + MongoDB application that helps you track your daily moods through music. Log your emotions, link them to songs, and visualize your mood patterns with beautiful statistics.
 
+The infrastructure is provisioned with Terraform and the pipeline closes the loop: `terraform apply`
+hands back the load balancer's DNS name, which is injected into the Flutter app's config before the
+APK is built. Production releases go out as an Auto Scaling Group instance refresh behind a manual
+gate.
+
+![Architecture](assets/architecture.svg)
+
 ## ✨ Features
 
 - **8 Mood Types**: Happy, Sad, Energetic, Calm, Angry, Anxious, Romantic, Nostalgic
@@ -42,22 +49,26 @@ A full-stack Flutter + Node.js + MongoDB application that helps you track your d
 ## 📁 Project Structure
 
 ```
-flutterapp/
-├── MoodTunes_Backend/      # Node.js backend
+├── backend/                # Node.js + Express
 │   ├── model/              # MongoDB schemas (MoodEntry, User)
 │   ├── controller/         # Request handlers
 │   ├── services/           # Business logic
 │   ├── router/             # API routes
-│   ├── terraform/          # AWS infrastructure
+│   ├── terraform/          # AWS + MongoDB Atlas infrastructure
+│   │   ├── alb.tf          # Load balancer and target group
+│   │   ├── autoscaling.tf  # Launch template, ASG, scaling policies, alarms
+│   │   ├── atlas.tf        # Atlas project, cluster, user, IP access list
+│   │   └── main.tf         # VPC, subnets, security groups
 │   └── Dockerfile
-└── moodtunes_frontend/     # Flutter frontend
-    ├── lib/
-    │   ├── main.dart       # App entry point
-    │   ├── loginPage.dart  # Login screen
-    │   ├── registration.dart
-    │   ├── dashboard.dart  # Main mood journal
-    │   └── config.dart     # API endpoints
-    └── pubspec.yaml
+├── frontend/               # Flutter
+│   ├── lib/
+│   │   ├── main.dart       # App entry point
+│   │   ├── loginPage.dart  # Login screen
+│   │   ├── registration.dart
+│   │   ├── dashboard.dart  # Main mood journal
+│   │   └── config.dart     # API endpoints, written by CI
+│   └── pubspec.yaml
+└── .gitlab-ci.yml          # Seven-stage pipeline
 ```
 
 ## 🚀 Getting Started
@@ -113,7 +124,9 @@ flutter run -d chrome  # or android/ios
 
 ## 📱 Screenshots
 
-*Coming soon - New MoodTunes UI screenshots*
+| Dashboard | New entry | Statistics |
+|---|---|---|
+| ![Dashboard](assets/screens/dashboard.png) | ![New entry](assets/screens/entry.png) | ![Statistics](assets/screens/stats.png) |
 
 ## 🔧 API Endpoints
 
@@ -129,17 +142,26 @@ POST /getEntriesByMood      # Filter by mood type
 
 ## 🌐 Deployment
 
-Deployed using GitLab CI/CD with:
-- Terraform Cloud for infrastructure
-- AWS (VPC, ALB, ASG, EC2 t3.micro)
-- MongoDB Atlas M0 Free Tier
-- Docker Hub for images
-- GitLab Pages for APK downloads
+Seven stages in `.gitlab-ci.yml`:
+
+| Stage | What happens |
+|---|---|
+| `infrastructure` | `terraform apply`, exporting the ALB DNS name, ASG name and Atlas connection details as job artifacts |
+| `flutter_config` | Rewrites the app's `config.dart` with the ALB DNS from the previous stage |
+| `mobile_build` | Builds the Android APK and publishes it to the GitLab Package Registry |
+| `test` | Runs the Flutter test suite with coverage |
+| `backend_build` | Builds and pushes the backend image |
+| `staging` | Deploys to a VPS over SSH with Docker Compose |
+| `production` | Manual gate, then an ASG instance refresh with a rolling strategy, polled to completion |
+| `pages` | Publishes an index of every APK version from the registry |
+
+Because the app's API endpoint comes from a Terraform output rather than a hardcoded constant, the
+load balancer can be destroyed and rebuilt without touching application code.
+
+Infrastructure is declared across `alb.tf`, `autoscaling.tf`, `atlas.tf` and `main.tf`. Scaling is
+driven by CloudWatch CPU alarms at 70% and 30% with 300-second cooldowns, and the ASG uses ELB
+health checks so an instance failing HTTP is replaced rather than merely restarted.
 
 ## 📄 License
 
 MIT License
-
-## 👨‍💻 Author
-
-Built as a full-stack DevOps demonstration project
