@@ -1,5 +1,9 @@
 # 🎵 MoodTunes - Music Mood Journal
 
+> **CI/CD runs on GitLab.** GitHub does not execute `.gitlab-ci.yml`, so no workflows run here.
+> The pipeline definition is [`.gitlab-ci.yml`](.gitlab-ci.yml), and the runs themselves are at
+> [gitlab.com/mohamedaziz.hadjkacem21/flutterapp](https://gitlab.com/mohamedaziz.hadjkacem21/flutterapp/-/pipelines).
+
 A Flutter + Node.js + MongoDB mood journal: log how you feel, attach the song you were listening
 to, and watch the patterns build up over time.
 
