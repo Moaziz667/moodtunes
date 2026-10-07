@@ -1,11 +1,19 @@
 # 🎵 MoodTunes - Music Mood Journal
 
-A full-stack Flutter + Node.js + MongoDB application that helps you track your daily moods through music. Log your emotions, link them to songs, and visualize your mood patterns with beautiful statistics.
+A Flutter + Node.js + MongoDB mood journal: log how you feel, attach the song you were listening
+to, and watch the patterns build up over time.
 
-The infrastructure is provisioned with Terraform and the pipeline closes the loop: `terraform apply`
-hands back the load balancer's DNS name, which is injected into the Flutter app's config before the
-APK is built. Production releases go out as an Auto Scaling Group instance refresh behind a manual
-gate.
+**The application is the test subject, not the point.** It exists to give the infrastructure
+something real to carry — a mobile client that has to be built and distributed, a stateful backend
+that has to scale, and a managed database that has to be provisioned. What this repository is
+actually about is everything underneath that.
+
+The pipeline closes a loop most projects leave open: `terraform apply` creates the load balancer
+and hands its DNS name back as an output, the pipeline writes that name into the Flutter app's
+config, and only then is the APK built. The app never contains a hardcoded endpoint, so the entire
+network layer can be destroyed and rebuilt without editing a line of Dart. Production releases go
+out as an Auto Scaling Group instance refresh behind a manual gate, polled until the fleet has
+turned over.
 
 ![Architecture](assets/architecture.svg)
 
@@ -26,25 +34,25 @@ gate.
 
 ## 🛠️ Tech Stack
 
-### Frontend
-- **Flutter** - Cross-platform mobile framework
-- **Google Fonts** - Poppins typography
-- **fl_chart** - Beautiful charts and graphs
-- **JWT Decoder** - Token authentication
+### Infrastructure and delivery — where the work is
+- **Terraform** - VPC, subnets, security groups, ALB, launch template, Auto Scaling Group, CloudWatch alarms
+- **MongoDB Atlas** - provisioned through the `mongodbatlas` provider, not clicked together by hand
+- **AWS** - ALB with ELB health checks, ASG across two availability zones, EC2
+- **GitLab CI/CD** - seven stages, Terraform outputs passed forward as artifacts, manual production gate
+- **Docker** - backend image built in CI and pulled by instances at boot
+- **GitLab Pages + Package Registry** - versioned APK distribution
 
 ### Backend
-- **Node.js** - Server runtime
-- **Express.js** - Web framework
-- **MongoDB** - Database
-- **bcrypt** - Password hashing
-- **JWT** - Authentication tokens
+- **Node.js** / **Express.js** - REST API
+- **MongoDB** - document store
+- **bcrypt** - password hashing
+- **JWT** - authentication tokens
 
-### DevOps
-- **AWS** - VPC, ALB, ASG, EC2
-- **MongoDB Atlas** - Cloud database
-- **Terraform** - Infrastructure as Code
-- **GitLab CI/CD** - Automated deployment
-- **Docker** - Containerization
+### Frontend
+- **Flutter** - Android, iOS and Web from one codebase
+- **fl_chart** - statistics charts
+- **Google Fonts** - Poppins typography
+- **JWT Decoder** - token handling
 
 ## 📁 Project Structure
 
@@ -122,11 +130,11 @@ flutter run -d chrome  # or android/ios
 - Secondary: `#1ED760`
 - Text: `#FFFFFF`
 
-## 📱 Screenshots
+## 📱 Getting the app
 
-| Dashboard | New entry | Statistics |
-|---|---|---|
-| ![Dashboard](assets/screens/dashboard.png) | ![New entry](assets/screens/entry.png) | ![Statistics](assets/screens/stats.png) |
+Every pipeline run publishes a signed APK to the GitLab Package Registry, and the `pages` stage
+rebuilds an index listing every version in descending order — so any build is downloadable without
+digging through job artifacts.
 
 ## 🔧 API Endpoints
 
